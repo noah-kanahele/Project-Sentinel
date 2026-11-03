@@ -19,6 +19,7 @@ import numpy as np
 
 from edge_vision.camera.frame_source import Frame, FrameSource
 from edge_vision.detection.detector import Detector
+from edge_vision.recording import FrameRecorder
 from edge_vision.telemetry.logger import TelemetryLogger
 from edge_vision.tracking.tracker import TrackOutput, Tracker
 from edge_vision.visualization.overlay import draw_overlay
@@ -123,18 +124,24 @@ class RealtimeRunner:
         logger: Optional[TelemetryLogger] = None,
         display: bool = False,
         warmup_image: Optional[np.ndarray] = None,
+        record_raw: Optional[FrameRecorder] = None,
+        record_overlay: Optional[FrameRecorder] = None,
     ) -> None:
         """`pace` replays a file at its own timestamps (x `speed`); leave it False for live cameras.
 
         `period_s` is the source's frame period used for deadline misses; defaults to the
         source's `nominal_fps` when it has one. If `warmup_image` is given, the detector runs on it
         once before the clock starts (model load / first-call cost is not steady-state latency).
+        `record_raw` saves every captured frame (written by the capture thread before the frame is
+        offered, so processing drops never affect it); `record_overlay` saves each processed frame
+        with the tracker's drawing, i.e. what was on screen. Both are closed by `run`.
         """
         if speed <= 0:
             raise ValueError("speed must be positive")
         self.source, self.detector, self.tracker = source, detector, tracker
         self.pace, self.speed, self.logger, self.display = pace, speed, logger, display
         self.warmup_image = warmup_image
+        self.record_raw, self.record_overlay = record_raw, record_overlay
         fps = getattr(source, "nominal_fps", 0.0)
         self.period_s = period_s if period_s is not None else (1.0 / fps if fps > 0 else None)
         self._box = LatestFrame()
@@ -149,6 +156,8 @@ class RealtimeRunner:
                     break
                 if ts0 is None:
                     ts0 = frame.timestamp_s
+                if self.record_raw is not None:
+                    self.record_raw.write(frame.image, frame.timestamp_s)
                 if self.pace:
                     wait = t_start + (frame.timestamp_s - ts0) / self.speed - time.perf_counter()
                     if wait > 0:
@@ -195,10 +204,13 @@ class RealtimeRunner:
                 if self.logger is not None:
                     self.logger.log_frame(output, (t1 - t0) * 1000.0, (t2 - t0) * 1000.0)
 
-                if self.display:
+                if self.display or self.record_overlay is not None:
                     subject = self.tracker.subject
                     history = subject.trajectory.points() if subject is not None else []
                     draw_overlay(frame.image, output, history, self.tracker.predicted_arc(), [d.bbox_xyxy for d in detections])
+                    if self.record_overlay is not None:
+                        self.record_overlay.write(frame.image, frame.timestamp_s)
+                if self.display:
                     cv2.imshow(WINDOW_NAME, frame.image)
                     if (cv2.waitKey(1) & 0xFF) == QUIT_KEY:
                         break
@@ -213,6 +225,8 @@ class RealtimeRunner:
             stats.dropped = self._box.dropped
             if self.display:
                 cv2.destroyWindow(WINDOW_NAME)
-            if self.pace:  # file replay ends on its own; a live camera thread is a daemon blocked in read()
-                thread.join(timeout=1.0)
+            thread.join(timeout=1.0)  # a live camera thread may still be blocked in read(); it is a daemon
+            for recorder in (self.record_raw, self.record_overlay):
+                if recorder is not None:
+                    recorder.close()
         return RealtimeResult(outputs=outputs, stats=stats)

@@ -6,13 +6,19 @@
   python scripts/run_realtime.py --camera 0 --detector color --duration 20 --display   # live webcam
 
 Reports dropped frames, deadline misses and capture-to-output latency percentiles, and
-PASS/FAIL against the `realtime:` thresholds in the config. On macOS the first webcam use
+PASS/FAIL against the `realtime:` thresholds in the config.
+
+--record [PREFIX] saves the session for offline analysis: PREFIX.mp4 (raw camera frames),
+PREFIX.timestamps.csv (the real per-frame timestamps; replays pick them up automatically) and
+PREFIX_overlay.mp4 (what the tracker drew live). PREFIX defaults to data/webcam_<date-time>.
+On macOS the first webcam use
 asks for camera permission for your terminal app.
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +28,7 @@ from edge_vision.config import load_config
 from edge_vision.detection.color import ColorBlobDetector
 from edge_vision.detection.detector import Detector, YoloDetector
 from edge_vision.realtime import RealtimeRunner
+from edge_vision.recording import FrameRecorder
 from edge_vision.telemetry.logger import TelemetryLogger
 from edge_vision.tracking.tracker import Tracker, TrackerConfig
 
@@ -47,6 +54,7 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0, help="file replay speed factor (2 = twice as fast as real time)")
     ap.add_argument("--duration", type=float, help="stop after this many seconds (needed for a live camera)")
     ap.add_argument("--csv", help="write per-frame telemetry here")
+    ap.add_argument("--record", nargs="?", const="auto", metavar="PREFIX", help="save raw + annotated video and timestamps for offline analysis")
     ap.add_argument("--display", action="store_true", help="show the overlay window (q quits)")
     args = ap.parse_args()
     if (args.video is None) == (args.camera is None):
@@ -59,14 +67,23 @@ def main() -> None:
     source: FrameSource = (
         CameraSource(args.camera, args.width, args.height, args.fps) if args.camera is not None else VideoFileSource(args.video)
     )
+    raw = overlay = None
+    if args.record:
+        prefix = Path(f"data/webcam_{time.strftime('%Y%m%d_%H%M%S')}" if args.record == "auto" else args.record)
+        fps = getattr(source, "nominal_fps", 0.0)
+        raw = FrameRecorder(prefix.with_suffix(".mp4"), fps, source.size, sidecar=True)  # type: ignore[attr-defined]
+        overlay = FrameRecorder(prefix.parent / f"{prefix.name}_overlay.mp4", fps, source.size, sidecar=False)  # type: ignore[attr-defined]
     with TelemetryLogger(args.csv) as logger, source:
         tracker = Tracker(TrackerConfig.from_dict(cfg), event_sink=logger.log_event)
         runner = RealtimeRunner(
             source, detector, tracker, pace=args.camera is None, speed=args.speed, logger=logger, display=args.display,
             warmup_image=np.zeros((source.size[1], source.size[0], 3), np.uint8),  # type: ignore[attr-defined]
+            record_raw=raw, record_overlay=overlay,
         )
         result = runner.run(duration_s=args.duration)
 
+    if raw is not None:
+        print(f"recorded {raw.frames} raw frames -> {raw.path} (+ timestamps sidecar), annotated -> {overlay.path}")  # type: ignore[union-attr]
     s = result.stats.summary()
     print(f"frames captured {s['captured']}, processed {s['processed']}, dropped {s['dropped']} ({100 * s['drop_fraction']:.1f}%)")
     print(f"processed fps {s['processed_fps']:.1f}   source frame period {s['period_ms']:.1f} ms   deadline misses {s['deadline_misses']}")
