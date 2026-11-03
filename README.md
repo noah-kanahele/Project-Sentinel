@@ -205,6 +205,7 @@ Sweeps used 20-30 seeds per cell on the synthetic ball (60 FPS, parabola, 2 px c
 | `gate_base_radius_px` | 40 | floor; 20 to 60 behaved similarly once growth was small |
 | `gate_size_scale` | 1.0 | gate is at least one object size wide; added after real footage (below) |
 | `observed_gate_growth_size_fraction` | 0.1 | extrapolation gate grows 10% of object size per missed frame |
+| `observed_gate_max_misses` | 10 | extrapolation gate only for the first 10 missed frames (5 is not enough on the real clip; unlimited costs 10 points on long occlusions) |
 | `size_ratio_max` | 2.0 | reject detections more than 2x larger/smaller than the track |
 | `gate_growth_per_frame_lost_px` | **2** | was 12 in the first draft; see below |
 | `gate_covariance_scale` | 3.0 | adaptive margin from Kalman uncertainty |
@@ -234,16 +235,16 @@ Final occlusion x false-positive table (30 seeds per cell, defaults above):
 occl_len  fp_rate   reacq  id_sw  fp_adopt  occl_err  err_mean  err_p95
        3      0.0  100.0%      0         0       1.3       1.4      3.2
        3      0.1  100.0%      1         1       1.3       1.7      3.2
-       3      0.5  100.0%      0         1       1.6       1.5      3.7
+       3      0.5  100.0%      0         1       1.7       1.5      3.9
        8      0.0  100.0%      0         0       1.6       1.4      3.3
        8      0.1  100.0%      1         1       1.6       1.8      3.3
-       8      0.5  100.0%      0         2       2.2       1.5      3.9
+       8      0.5  100.0%      0         2       2.3       1.6      4.0
       15      0.0  100.0%      0         0       2.2       1.5      3.9
       15      0.1  100.0%      1         1       2.2       1.9      3.8
-      15      0.5  100.0%      0         3       3.6       1.8      4.6
+      15      0.5  100.0%      0         3       3.8       1.8      4.6
       30      0.0  100.0%      0         0       3.8       2.0      6.4
       30      0.1   96.7%      2         2       4.0       5.4      7.7
-      30      0.5   83.3%      2        13       9.7      26.2    195.6
+      30      0.5   83.3%      3        11      10.0      21.8    162.5
 ```
 
 Under harsher conditions (6 px noise, 3 ms timestamp jitter, 10% dropouts, 0.2 FP/frame)
@@ -269,7 +270,10 @@ tried first and is not the lever (94% plateau from 500 to 5000, worse above). Le
 gate grow by a fixed 10 px per frame also fixed the clip but cost the synthetic false-positive
 stress about 6-16 points of reacquisition, because 10 px is 40% of the 24 px synthetic ball but
 9% of the 110 px real one; growing by a *fraction of object size* costs about 1-2 points.
-Remaining caveat: the clip is a hand moving the ball, and `Gren_Ball_Test001` (ball visible for
+The extrapolation gate is only used for the first `observed_gate_max_misses` missed frames: left
+on indefinitely it cost the worst synthetic cell (30-frame occlusion, 0.5 FP/frame) 10 points
+(83.3% -> 73.3%), because a ballistic ball does not return along a straight line; 10 frames keeps
+the real-clip gain (99.6%) and restores the synthetic numbers. Remaining caveat: the clip is a hand moving the ball, and `Gren_Ball_Test001` (ball visible for
 only 18 short bursts at about 200 px/frame) is still 44% and is not fixable by gating.
 
 Also found in that audit: the color detector gave a 16 px speck confidence 1.0 and the real ball
