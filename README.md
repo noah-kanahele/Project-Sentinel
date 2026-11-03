@@ -16,7 +16,8 @@ those timestamps, never wall-clock (wall-clock is used only to report latency).
 configs/default.yaml        every tunable threshold
 src/edge_vision/
   camera/                   FrameSource ABC, VideoFileSource, CameraSource stub
-  detection/                Detection, Detector ABC, YoloDetector (ultralytics, optional import)
+  detection/                Detection, Detector ABC, YoloDetector (ultralytics, optional import),
+                            ColorBlobDetector (HSV threshold + contour filter, plain OpenCV)
   tracking/                 kalman.py, state_machine.py, tracker.py, metrics.py
   motion/                   trajectory history, velocity estimate, predicted arc
   sim/                      synthetic.py (generator), runner.py (drive tracker over a sequence)
@@ -67,6 +68,12 @@ error inside occlusions; `err_mean` / `err_p95` = prediction error over all fram
 ```bash
 python scripts/run_video.py path/to/clip.mp4 --config configs/default.yaml --csv logs/out.csv --display
 ```
+
+Add `--detector color` to use the HSV color-blob detector instead of YOLO (no model, about a
+millisecond per frame). Its hue/saturation/value range and blob filters live under
+`color_detector:` in the config; the default range is green. For red/pink set `hue_min` greater
+than `hue_max` (the range wraps around 0). Detections from either detector are emitted with
+`detection.class_id`, so the tracker's class filter matches.
 
 Click a detection in the window to choose the subject; otherwise the highest-confidence sports
 ball is auto-selected whenever there is no live subject (including after a track ends). `q`
@@ -160,9 +167,10 @@ The weak spot is long occlusions with many false positives (30 frames, 0.5 FP/fr
 
 ## Not verified yet
 
-- `YoloDetector` and `scripts/run_video.py` have **not** been run against real YOLO weights or
-  real footage (ultralytics is not installed on this laptop). Only the import-error path and the
-  surrounding pipeline (with a stub detector) are tested.
+- `YoloDetector` has only been tried on a few short phone clips. On a pink gumball it labeled
+  the ball "orange" (COCO 49) rather than "sports ball" (32), and on a small, motion-blurred green
+  ball it gave too few detections to confirm a track. The color detector exists for such cases.
+- No clip yet has a full throw-and-occlude arc with the ball in frame throughout.
 - The click-to-select display window is untested (`pick_clicked` and overlay drawing are tested).
 - No real-video tuning: the defaults come from synthetic data only.
 
