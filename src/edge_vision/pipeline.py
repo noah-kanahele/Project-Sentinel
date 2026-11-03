@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 
@@ -32,12 +32,16 @@ def process_stream(
     logger: Optional[TelemetryLogger] = None,
     display: bool = False,
     analysis: Optional[AnalysisWriter] = None,
+    progress: Optional[Callable[[int, bool], None]] = None,
 ) -> List[TrackOutput]:
     """Run the whole pipeline over `source`; returns per-frame outputs.
 
     Subject selection: a click in the display window picks a detection; otherwise the
     highest-confidence detection is auto-selected whenever there is no live subject.
     If `analysis` is given, every annotated frame is also written to the slow-motion analysis video.
+    `progress(frames_done, finished)` is called after every frame, and once more with
+    `finished=True` if the stream ended on its own (not on q or Ctrl-C, which return what was
+    processed so far).
     Wall-clock is used only to measure latency, never for tracking dt.
     """
     pending_click: List[Tuple[int, int]] = []
@@ -70,6 +74,8 @@ def process_stream(
 
             if analysis is not None:
                 analysis.write(frame.image, output, detections, tracker)
+            if progress is not None:
+                progress(len(outputs), False)
 
             if display:
                 subject = tracker.subject
@@ -78,6 +84,11 @@ def process_stream(
                 cv2.imshow(WINDOW_NAME, frame.image)
                 if (cv2.waitKey(1) & 0xFF) == QUIT_KEY:
                     break
+        else:  # the stream ended on its own
+            if progress is not None:
+                progress(len(outputs), True)
+    except KeyboardInterrupt:
+        pass  # keep the partial results
     finally:
         if display:
             cv2.destroyWindow(WINDOW_NAME)

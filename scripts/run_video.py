@@ -11,6 +11,7 @@ detection is auto-selected. Press q to quit. The yolo detector needs: pip instal
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from edge_vision.camera.frame_source import VideoFileSource
@@ -54,14 +55,27 @@ def main() -> None:
         tracker = Tracker(TrackerConfig.from_dict(cfg), event_sink=logger.log_event)
         trail = args.trail_frames if args.trail_frames is not None else cfg["analysis"]["trail_frames"]
         writer = AnalysisWriter(args.analysis, source.nominal_fps, source.size, args.slowdown, trail) if args.analysis else None
+        total = source.frame_count  # from the container header: can differ from the frames actually decoded
+        step = max(1, (total or 100) // 20)
+        finished = [False]
+
+        def progress(done: int, is_finished: bool) -> None:
+            finished[0] = is_finished
+            if is_finished:
+                print(f"\r  processed {done}/{done} frames (100%)", file=sys.stderr, flush=True)
+            elif done % step == 0:
+                of = f"/~{total}" if total else ""
+                print(f"\r  processed {done}{of} frames", end="", file=sys.stderr, flush=True)
+
         try:
-            outputs = process_stream(source, detector, tracker, logger, args.display, writer)
+            outputs = process_stream(source, detector, tracker, logger, args.display, writer, progress)
         finally:
             if writer is not None:
                 writer.close()
 
     states = {s: sum(1 for o in outputs if o.state == s) for s in TrackState}
-    print(f"{len(outputs)} frames; transitions logged: {len(tracker.events)}")
+    stopped = "" if finished[0] else " (stopped early)"
+    print(f"{len(outputs)} frames{stopped}; transitions logged: {len(tracker.events)}")
     print("frames per state:", {s.value: n for s, n in states.items() if n})
     if args.analysis:
         print(f"analysis video: {args.analysis} ({args.slowdown:g}x slower)")

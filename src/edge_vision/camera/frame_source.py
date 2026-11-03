@@ -30,6 +30,7 @@ class FrameSource(ABC):
 
     nominal_fps: float = 0.0
     size: Tuple[int, int] = (0, 0)
+    frame_count: int = 0  # total frames if known (files), else 0
 
     @abstractmethod
     def read(self) -> Optional[Frame]:
@@ -65,6 +66,7 @@ class VideoFileSource(FrameSource):
             int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
             int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
         )
+        self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self._index = 0
         self._last_ts: Optional[float] = None
         # A sidecar written by FrameRecorder keeps the real frame spacing of a live recording.

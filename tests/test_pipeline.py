@@ -172,3 +172,28 @@ def test_yolo_detector_errors_clearly_without_ultralytics():
         pytest.skip("ultralytics installed")
     with pytest.raises(ImportError, match="ultralytics"):
         YoloDetector("yolo11n.pt", 32, 0.25, 640, "cpu")
+
+
+def test_progress_callback_counts_every_frame(clip, cfg):
+    path, detector = clip
+    seen = []
+    with VideoFileSource(path) as src:
+        assert src.frame_count == 60
+        process_stream(src, detector, Tracker(TrackerConfig.from_dict(cfg)), progress=lambda n, fin: seen.append((n, fin)))
+    assert [n for n, _ in seen[:60]] == list(range(1, 61))
+    assert [fin for _, fin in seen] == [False] * 60 + [True]  # one extra call when the stream ends
+
+
+def test_keyboard_interrupt_returns_partial_results(clip, cfg):
+    path, detector = clip
+
+    calls = []
+
+    def stop_at_ten(done, finished):
+        calls.append(finished)
+        if done == 10:
+            raise KeyboardInterrupt
+
+    with VideoFileSource(path) as src:
+        outputs = process_stream(src, detector, Tracker(TrackerConfig.from_dict(cfg)), progress=stop_at_ten)
+    assert len(outputs) == 10 and True not in calls  # an interrupted run is never reported as finished
