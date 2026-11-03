@@ -89,6 +89,10 @@ def main() -> None:
     print(f"processed fps {s['processed_fps']:.1f}   source frame period {s['period_ms']:.1f} ms   deadline misses {s['deadline_misses']}")
     print(f"latency ms  p50 {s['latency_p50_ms']:.1f}  p95 {s['latency_p95_ms']:.1f}  p99 {s['latency_p99_ms']:.1f}  max {s['latency_max_ms']:.1f}")
     print(f"process ms  p99 {s['process_p99_ms']:.1f}   (detect + track only)")
+    print(f"loop ms     p99 {s['loop_p99_ms']:.1f}  max {s['loop_max_ms']:.1f}   (whole iteration incl. drawing and recording)")
+    if result.stats.dropped_indices:
+        shown = ", ".join(str(i) for i in result.stats.dropped_indices[:15])
+        print(f"dropped frame indices: {shown}{' ...' if len(result.stats.dropped_indices) > 15 else ''}")
     verdict = result.stats.verdict(cfg["realtime"])
     for name, ok in verdict.items():
         print(f"  {name:<16} {'PASS' if ok else 'FAIL'}")

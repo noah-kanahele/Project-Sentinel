@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import threading
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -37,14 +38,24 @@ class FrameRecorder:
             raise IOError(f"Could not open video for writing: {self.path}")
         self._sidecar = sidecar
         self._timestamps: List[float] = []
+        self._lock = threading.Lock()
+        self._closed = False
         self.frames = 0
 
     def write(self, image: np.ndarray, timestamp_s: float) -> None:
-        self._writer.write(image)
-        self._timestamps.append(timestamp_s)
-        self.frames += 1
+        """Append a frame (ignored once closed, e.g. a camera thread still mid-read at shutdown)."""
+        with self._lock:
+            if self._closed:
+                return
+            self._writer.write(image)
+            self._timestamps.append(timestamp_s)
+            self.frames += 1
 
     def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
         self._writer.release()
         if self._sidecar:
             with open(sidecar_path(self.path), "w", newline="") as f:

@@ -103,3 +103,55 @@ def test_verdict_uses_config_thresholds(cfg):
 def test_invalid_speed_rejected(cfg):
     with pytest.raises(ValueError):
         RealtimeRunner(BallSource(), MovingBallDetector(), Tracker(TrackerConfig.from_dict(cfg)), pace=True, speed=0)
+
+
+class SlowRecorder:
+    """Stands in for FrameRecorder: writing takes a while (a slow disk or encoder)."""
+
+    def __init__(self, delay_s):
+        self.delay_s, self.frames, self.closed = delay_s, 0, False
+
+    def write(self, image, timestamp_s):
+        time.sleep(self.delay_s)
+        self.frames += 1
+
+    def close(self):
+        self.closed = True
+
+
+class ExplodingDetector(Detector):
+    def detect(self, image):
+        raise RuntimeError("detector blew up")
+
+
+def test_worker_exception_is_raised_to_the_caller(cfg):
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    with pytest.raises(RuntimeError, match="detector blew up"):
+        RealtimeRunner(BallSource(20), ExplodingDetector(), tracker, pace=True).run()
+
+
+def test_dropped_frame_indices_are_reported(cfg):
+    result = runner(cfg, delay_s=0.04, n=60).run()
+    s = result.stats
+    assert len(s.dropped_indices) == s.dropped > 0
+    assert set(s.dropped_indices).isdisjoint(result.outputs)  # dropped frames were never processed
+    assert all(0 <= i < 60 for i in s.dropped_indices)
+
+
+def test_slow_recording_counts_toward_loop_time_and_deadlines(cfg):
+    """Detection is instant, but writing the overlay takes 3 frame periods: the whole loop overruns."""
+    rec = SlowRecorder(delay_s=0.03)
+    result = runner(cfg, delay_s=0.0, n=40, record_overlay=rec).run()
+    s = result.stats.summary()
+    assert s["process_p99_ms"] < 10  # detect + track alone looks fine...
+    assert s["loop_p99_ms"] >= 30  # ...the full loop does not
+    assert s["deadline_misses"] > 0 and s["dropped"] > 0
+    assert rec.closed and rec.frames == result.stats.processed
+
+
+def test_recorders_are_closed_even_when_the_worker_fails(cfg):
+    raw, overlay = SlowRecorder(0.0), SlowRecorder(0.0)
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    with pytest.raises(RuntimeError):
+        RealtimeRunner(BallSource(20), ExplodingDetector(), tracker, pace=True, record_raw=raw, record_overlay=overlay).run()
+    assert raw.closed and overlay.closed
