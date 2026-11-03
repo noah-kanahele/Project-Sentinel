@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from edge_vision.config import build_config
 from edge_vision.detection.detector import Detection
@@ -129,3 +130,14 @@ def test_dt_comes_from_timestamps_not_frame_count(cfg):
 def test_no_subject_returns_empty_output(cfg):
     out = Tracker(TrackerConfig.from_dict(cfg)).update(0, 0.0, [det(1, 1)])
     assert out.track_id is None and out.state is None and out.bbox_xyxy is None
+
+
+def test_gate_scales_with_object_size(cfg):
+    """A big object gets a wider gate than the fixed pixel floor (a 24 px ball stays at the floor)."""
+    small, big = Tracker(TrackerConfig.from_dict(cfg)), Tracker(TrackerConfig.from_dict(cfg))
+    small.select(det(100, 100, size=24.0), 0.0, 0)
+    big.select(det(100, 100, size=200.0), 0.0, 0)
+    floor = cfg["tracker"]["gate_base_radius_px"]
+    cov = cfg["tracker"]["gate_covariance_scale"] * small.subject.kf.position_sigma()
+    assert small.gate_radius(small.subject) == pytest.approx(floor + cov)
+    assert big.gate_radius(big.subject) >= cfg["tracker"]["gate_size_scale"] * 200.0

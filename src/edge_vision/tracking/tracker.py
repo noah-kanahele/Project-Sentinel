@@ -29,6 +29,7 @@ Box = Tuple[float, float, float, float]
 @dataclass(frozen=True)
 class GateConfig:
     gate_base_radius_px: float
+    gate_size_scale: float
     gate_growth_per_frame_lost_px: float
     gate_covariance_scale: float
     gate_max_radius_px: float
@@ -148,10 +149,11 @@ class Tracker:
         return self.select(max(candidates, key=lambda d: d.confidence), timestamp_s, frame_idx)
 
     def gate_radius(self, track: Track) -> float:
-        """Base radius + growth per missed frame + scaled Kalman uncertainty, capped."""
+        """Base radius (at least `gate_size_scale` object sizes) + growth per missed frame + scaled Kalman uncertainty, capped."""
         g = self.cfg.gate
+        base = max(g.gate_base_radius_px, g.gate_size_scale * max(track.size))
         radius = (
-            g.gate_base_radius_px
+            base
             + g.gate_growth_per_frame_lost_px * track.misses
             + g.gate_covariance_scale * track.kf.position_sigma()
         )

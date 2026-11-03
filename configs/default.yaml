@@ -28,7 +28,8 @@ state_machine:
   max_frames_before_ended: 60         # total misses: -> TRACK_ENDED (must exceed the sum above)
 
 tracker:
-  gate_base_radius_px: 40
+  gate_base_radius_px: 40             # floor for the gate radius
+  gate_size_scale: 1.0                # gate is at least this many object sizes (larger of box w/h)
   gate_growth_per_frame_lost_px: 2    # added per consecutive missed frame (see README sweep)
   gate_covariance_scale: 3.0          # sigmas of predicted-position uncertainty added to the gate (0 disables)
   gate_max_radius_px: 400
