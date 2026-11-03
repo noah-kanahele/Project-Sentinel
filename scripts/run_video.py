@@ -14,7 +14,7 @@ import argparse
 from pathlib import Path
 
 from edge_vision.camera.frame_source import VideoFileSource
-from edge_vision.config import build_config, load_config
+from edge_vision.config import load_config
 from edge_vision.detection.color import ColorBlobDetector
 from edge_vision.detection.detector import Detector, YoloDetector
 from edge_vision.pipeline import process_stream

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from edge_vision.camera.frame_source import Frame, FrameSource, VideoFileSource
+from edge_vision.camera.frame_source import VideoFileSource
 from edge_vision.detection.color import ColorBlobDetector
 from edge_vision.realtime import RealtimeRunner
 from edge_vision.recording import FrameRecorder, load_timestamps, sidecar_path

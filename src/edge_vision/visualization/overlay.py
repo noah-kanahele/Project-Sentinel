@@ -1,7 +1,7 @@
 """OpenCV drawing for tracker output. Drawing only; no windows, no state."""
 from __future__ import annotations
 
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -40,9 +40,9 @@ def draw_overlay(
         cv2.rectangle(image, _pt((x1, y1)), _pt((x2, y2)), CANDIDATE_COLOR, 1)
 
     if len(history) >= 2:
-        cv2.polylines(image, [np.array([_pt(p) for p in history], dtype=np.int32)], False, HISTORY_COLOR, 2)
+        cv2.polylines(image, [np.array([_pt(p) for p in history], dtype=np.int32)], False, HISTORY_COLOR, 2)  # type: ignore[list-item]
     if arc:
-        cv2.polylines(image, [np.array([_pt(p) for p in arc], dtype=np.int32)], False, ARC_COLOR, 1, cv2.LINE_AA)
+        cv2.polylines(image, [np.array([_pt(p) for p in arc], dtype=np.int32)], False, ARC_COLOR, 1, cv2.LINE_AA)  # type: ignore[list-item]
 
     if output.state is None:
         _label(image, "no subject - click a detection", (10, 24), CANDIDATE_COLOR)

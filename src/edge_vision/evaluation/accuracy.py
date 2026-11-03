@@ -5,7 +5,6 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Optional, Tuple
 
-import numpy as np
 
 from edge_vision.evaluation.labels import Label
 from edge_vision.tracking.state_machine import TrackState

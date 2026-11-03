@@ -33,9 +33,9 @@ class FrameRecorder:
     def __init__(self, path: Union[str, Path], fps: float, size: Tuple[int, int], sidecar: bool) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), fps if fps > 0 else 30.0, size)
+        self._writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), fps if fps > 0 else 30.0, size)  # type: ignore[attr-defined]
         if not self._writer.isOpened():
-            raise IOError(f"Could not open video for writing: {self.path}")
+            raise OSError(f"Could not open video for writing: {self.path}")
         self._sidecar = sidecar
         self._timestamps: List[float] = []
         self._lock = threading.Lock()

@@ -28,7 +28,7 @@ def load_config(path: Union[str, Path]) -> Dict[str, Any]:
     config and override only some values.
     """
     path = Path(path)
-    with open(path, "r") as f:
+    with open(path) as f:
         data = yaml.safe_load(f)
     parent = data.pop("extends", None)
     if parent is not None:
@@ -48,7 +48,7 @@ def build_config(cls: Type[T], data: Mapping[str, Any]) -> T:
 
     Config dataclasses deliberately have no defaults: every value comes from YAML.
     """
-    names = {f.name for f in dataclasses.fields(cls)}
+    names = {f.name for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
     missing = names - set(data)
     unknown = set(data) - names
     if missing or unknown:

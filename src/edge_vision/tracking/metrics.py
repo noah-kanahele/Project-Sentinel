@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -54,7 +54,7 @@ class TrackMetrics:
         evaluable = [o for o in self.occlusions if o.evaluable]
         return sum(o.success for o in evaluable), len(evaluable)
 
-    def reacquisition_by_bucket(self, buckets: Sequence[Sequence[Optional[int]]]) -> Dict[str, Tuple[int, int]]:
+    def reacquisition_by_bucket(self, buckets: Sequence[Sequence[Any]]) -> Dict[str, Tuple[int, int]]:
         """{label: (successes, evaluable)} for occlusion-length buckets like [[1,5],[21,None]]."""
         result: Dict[str, Tuple[int, int]] = {}
         for lo, hi in buckets:
@@ -124,9 +124,10 @@ def compute_metrics(
         )
         success = False
         if live_before:
+            assert before is not None and before.track_id is not None
             end = start + length
             for out in outputs[end:end + reacq_deadline_frames]:
-                if out.track_id == before.track_id and out.state == TrackState.TRACKING and out.observed:
+                if out.track_id == before.track_id and out.state == TrackState.TRACKING and out.observed and out.center is not None:
                     err = np.hypot(out.center[0] - gt[out.frame_idx][0], out.center[1] - gt[out.frame_idx][1])
                     if err <= adoption_tolerance_px:
                         success = True

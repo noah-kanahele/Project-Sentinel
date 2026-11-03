@@ -37,7 +37,7 @@ def test_prediction_error_converges_on_noiseless_parabola(cfg):
 def test_predict_through_gap_stays_near_parabola(cfg):
     kf = make_filter(cfg)
     run_noiseless(kf, 60)
-    for i in range(61, 61 + 20):  # 20 predict-only steps, no updates
+    for _ in range(61, 61 + 20):  # 20 predict-only steps, no updates
         kf.predict(DT)
     assert np.linalg.norm(kf.position - truth(80 * DT)) < 3.0
 

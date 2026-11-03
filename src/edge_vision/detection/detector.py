@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 
@@ -52,7 +52,7 @@ class YoloDetector(Detector):
             raise ImportError(
                 "YoloDetector needs the optional 'ultralytics' package: pip install ultralytics"
             ) from exc
-        self._model = YOLO(model_path)
+        self._model: Any = YOLO(model_path)
         self._class_id = class_id
         self._conf = confidence_threshold
         self._imgsz = image_size

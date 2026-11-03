@@ -23,7 +23,7 @@ def _pct(succ: int, total: int) -> str:
     return f"{100.0 * succ / total:5.1f}%" if total else "  n/a "
 
 
-def print_table(header: Sequence[str], rows: List[Sequence[Any]]) -> None:
+def print_table(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     widths = [max(len(str(h)), *(len(str(r[i])) for r in rows)) for i, h in enumerate(header)]
     line = "  ".join(str(h).rjust(w) for h, w in zip(header, widths))
     print(line)

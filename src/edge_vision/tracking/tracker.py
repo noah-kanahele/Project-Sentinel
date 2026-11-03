@@ -52,7 +52,7 @@ class TrackerConfig:
     trajectory: TrajectoryConfig
 
     @classmethod
-    def from_dict(cls, cfg: Mapping[str, Any]) -> "TrackerConfig":
+    def from_dict(cls, cfg: Mapping[str, Any]) -> TrackerConfig:
         """Assemble from the sections of a full default.yaml-style dict."""
         return cls(
             confidence_threshold=float(cfg["detection"]["confidence_threshold"]),

@@ -43,7 +43,7 @@ class ColorBlobDetector(Detector):
         self._kernel = np.ones((k, k), np.uint8)
 
     @classmethod
-    def from_config(cls, cfg: Mapping[str, Any]) -> "ColorBlobDetector":
+    def from_config(cls, cfg: Mapping[str, Any]) -> ColorBlobDetector:
         """Build from a full default.yaml-style dict (class id comes from the `detection` section)."""
         section = {**cfg["color_detector"], "class_id": cfg["detection"]["class_id"]}
         return cls(build_config(ColorDetectorConfig, section))

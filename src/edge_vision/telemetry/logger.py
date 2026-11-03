@@ -84,7 +84,7 @@ class TelemetryLogger:
             if f is not None:
                 f.close()
 
-    def __enter__(self) -> "TelemetryLogger":
+    def __enter__(self) -> TelemetryLogger:
         return self
 
     def __exit__(self, *exc: object) -> None:

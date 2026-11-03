@@ -37,9 +37,9 @@ class AnalysisWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.slowdown = slowdown
         self.fps = source_fps / slowdown
-        self._writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, size)
+        self._writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, size)  # type: ignore[attr-defined]
         if not self._writer.isOpened():
-            raise IOError(f"Could not open analysis video for writing: {self.path}")
+            raise OSError(f"Could not open analysis video for writing: {self.path}")
         self._trail: List[Tuple[Point, bool]] = []  # (center, observed)
 
     def write(self, image: np.ndarray, output: TrackOutput, detections: Sequence[Detection], tracker: Tracker) -> None:
@@ -60,7 +60,7 @@ class AnalysisWriter:
         """Whole path so far: line through every point, filled dot = observed, hollow = predicted."""
         pts = [p for p, _ in self._trail]
         if len(pts) >= 2:
-            cv2.polylines(canvas, [np.array([_pt(p) for p in pts], dtype=np.int32)], False, TRAIL_COLOR, 1, cv2.LINE_AA)
+            cv2.polylines(canvas, [np.array([_pt(p) for p in pts], dtype=np.int32)], False, TRAIL_COLOR, 1, cv2.LINE_AA)  # type: ignore[list-item]
         for p, observed in self._trail:
             if observed:
                 cv2.circle(canvas, _pt(p), 4, TRAIL_COLOR, -1, cv2.LINE_AA)
@@ -92,7 +92,7 @@ class AnalysisWriter:
     def close(self) -> None:
         self._writer.release()
 
-    def __enter__(self) -> "AnalysisWriter":
+    def __enter__(self) -> AnalysisWriter:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -103,7 +103,7 @@ def play_video(path: Union[str, Path], window: str = "edge-vision analysis", qui
     """Play a video file in a window at its own frame rate; press q to stop."""
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
-        raise IOError(f"Could not open video: {path}")
+        raise OSError(f"Could not open video: {path}")
     fps = cap.get(cv2.CAP_PROP_FPS)
     delay_ms = max(1, int(round(1000.0 / fps))) if fps > 0 else 33
     try:

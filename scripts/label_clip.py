@@ -19,8 +19,9 @@ Frame indices match scripts/run_video.py and scripts/evaluate_accuracy.py.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -43,29 +44,35 @@ def load_frames(path: str) -> List[np.ndarray]:
     return frames
 
 
+@dataclass
+class ReviewState:
+    index: int = 0
+    click: Optional[Tuple[float, float]] = None  # full-resolution pixels, set by the mouse callback
+
+
 def review(frames: List[np.ndarray], labels: Dict[int, Label], out: str) -> None:
     h, w = frames[0].shape[:2]
     scale = min(1.0, MAX_SHOW_WIDTH / w)
-    state = {"i": 0, "click": None}
+    state = ReviewState()
 
     def on_mouse(event: int, x: int, y: int, *_: object) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
-            state["click"] = (x / scale, y / scale)
+            state.click = (x / scale, y / scale)
 
     cv2.namedWindow(WINDOW)
     cv2.setMouseCallback(WINDOW, on_mouse)
     last_size = next((lb.size for lb in labels.values() if lb.size), 40.0)
     while True:
-        i = state["i"]
+        i = state.index
         label = labels[i]
-        if state["click"] is not None:
+        if state.click is not None:
             size = label.size or last_size
-            label = labels[i] = Label(i, True, state["click"][0], state["click"][1], size, size)
-            state["click"] = None
+            label = labels[i] = Label(i, True, state.click[0], state.click[1], size, size)
+            state.click = None
         if label.size:
             last_size = label.size
         img = cv2.resize(frames[i], (int(w * scale), int(h * scale)))
-        if label.visible and label.cx is not None:
+        if label.visible and label.cx is not None and label.cy is not None:
             c = (int(label.cx * scale), int(label.cy * scale))
             r = int((label.size or last_size) * scale / 2)
             cv2.circle(img, c, r, (0, 255, 0), 2)
@@ -83,13 +90,13 @@ def review(frames: List[np.ndarray], labels: Dict[int, Label], out: str) -> None
             continue
         ch = chr(key)
         if ch in (" ", "d"):
-            state["i"] = min(i + 1, len(frames) - 1)
+            state.index = min(i + 1, len(frames) - 1)
         elif ch == "a":
-            state["i"] = max(i - 1, 0)
+            state.index = max(i - 1, 0)
         elif ch == "w":
-            state["i"] = min(i + 10, len(frames) - 1)
+            state.index = min(i + 10, len(frames) - 1)
         elif ch == "s":
-            state["i"] = max(i - 10, 0)
+            state.index = max(i - 10, 0)
         elif ch == "x":
             labels[i] = Label(i, False)
         elif ch in "[]" and label.visible:

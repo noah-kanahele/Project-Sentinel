@@ -19,11 +19,17 @@ class Frame:
 
     index: int
     timestamp_s: float
-    image: Optional[np.ndarray] = None
+    image: np.ndarray
 
 
 class FrameSource(ABC):
-    """Anything that yields timestamped frames."""
+    """Anything that yields timestamped frames.
+
+    Sources that know them also expose `nominal_fps` (0 if unknown) and `size` (width, height).
+    """
+
+    nominal_fps: float = 0.0
+    size: Tuple[int, int] = (0, 0)
 
     @abstractmethod
     def read(self) -> Optional[Frame]:
@@ -40,7 +46,7 @@ class FrameSource(ABC):
                 return
             yield frame
 
-    def __enter__(self) -> "FrameSource":
+    def __enter__(self) -> FrameSource:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -53,7 +59,7 @@ class VideoFileSource(FrameSource):
     def __init__(self, path: Union[str, Path]) -> None:
         self._cap = cv2.VideoCapture(str(path))
         if not self._cap.isOpened():
-            raise IOError(f"Could not open video file: {path}")
+            raise OSError(f"Could not open video file: {path}")
         self.nominal_fps: float = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
         self.size: Tuple[int, int] = (
             int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
@@ -103,7 +109,7 @@ class CameraSource(FrameSource):
     ) -> None:
         self._cap = cv2.VideoCapture(device)
         if not self._cap.isOpened():
-            raise IOError(f"Could not open camera {device!r} (on macOS, allow camera access for your terminal app)")
+            raise OSError(f"Could not open camera {device!r} (on macOS, allow camera access for your terminal app)")
         if width:
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if height:
