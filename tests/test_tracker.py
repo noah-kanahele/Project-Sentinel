@@ -178,3 +178,19 @@ def test_observed_extrapolation_follows_last_two_hits(cfg):
     t = tracker.subject
     assert tracker.observed_extrapolation(t, 0.2) == pytest.approx((140.0, 100.0))
     assert tracker.observed_extrapolation(t, 0.1) == pytest.approx((120.0, 100.0))
+
+
+def test_observed_extrapolation_gate_switches_off_after_max_misses(cfg):
+    """Long gaps mean a ballistic flight: the straight-line extrapolation must stop attracting detections."""
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    tracker.select(det(100, 100), 0.0, 0)
+    tracker.update(0, 0.0, [det(100, 100)])
+    tracker.update(1, 0.1, [det(110, 100)])
+    track = tracker.subject
+    candidate = det(130.0, 100.0)  # exactly on the extrapolated path at t = 0.3 s
+    far_prediction, tiny_gate = (900.0, 900.0), 5.0  # so only the extrapolation gate can match
+
+    track.machine.misses = cfg["tracker"]["observed_gate_max_misses"]
+    assert tracker._associate(track, far_prediction, tiny_gate, [candidate], 0.3) is candidate
+    track.machine.misses = cfg["tracker"]["observed_gate_max_misses"] + 1
+    assert tracker._associate(track, far_prediction, tiny_gate, [candidate], 0.3) is None

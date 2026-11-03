@@ -35,6 +35,7 @@ tracker:
   gate_covariance_scale: 3.0          # sigmas of predicted-position uncertainty added to the gate (0 disables)
   gate_max_radius_px: 400
   observed_gate_growth_size_fraction: 0.1  # observed-extrapolation gate grows this fraction of the object size per missed frame
+  observed_gate_max_misses: 10        # ...and is only used for this many consecutive missed frames
   size_ratio_max: 2.0                 # reject detections smaller/larger than the track by more than this factor
 
 kalman:

@@ -41,6 +41,7 @@ class GateConfig:
     gate_max_radius_px: float
     size_ratio_max: float
     observed_gate_growth_size_fraction: float
+    observed_gate_max_misses: int
 
 
 @dataclass(frozen=True)
@@ -196,10 +197,12 @@ class Tracker:
     ) -> Optional[Detection]:
         """Nearest same-class, confident, similar-sized detection inside the gate around the Kalman
         prediction, or inside the (smaller) observed-extrapolation gate. That second gate grows with
-        misses more slowly than the prediction gate and ignores Kalman uncertainty, so it adds little
-        false-positive exposure."""
+        misses more slowly than the prediction gate, ignores Kalman uncertainty and switches off after
+        `observed_gate_max_misses` (abrupt hand/bounce motion recovers within a few frames; a long
+        gap means a ballistic flight, where a straight-line extrapolation only invites false positives)."""
         g = self.cfg.gate
         extrap = self.observed_extrapolation(track, timestamp_s)
+        use_extrap = track.misses <= g.observed_gate_max_misses
         extrap_radius = min(
             g.gate_max_radius_px, self.base_radius(track) + g.observed_gate_growth_size_fraction * max(track.size) * track.misses
         )
@@ -213,9 +216,10 @@ class Tracker:
             to_pred = _distance(predicted, det.center)
             if to_pred <= gate:
                 reach.append(to_pred)
-            to_extrap = _distance(extrap, det.center)
-            if to_extrap <= extrap_radius:
-                reach.append(to_extrap)
+            if use_extrap:
+                to_extrap = _distance(extrap, det.center)
+                if to_extrap <= extrap_radius:
+                    reach.append(to_extrap)
             if reach and min(reach) < best_dist:
                 best, best_dist = det, min(reach)
         return best
