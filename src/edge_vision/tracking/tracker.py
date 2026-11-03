@@ -3,6 +3,12 @@
 Reacquisition is just association: while a track is lost, its Kalman prediction keeps
 moving along the (gravity-aware) arc and its gate keeps growing. The first detection that
 falls inside the gate inherits the track id. Detections outside the gate are ignored.
+
+Two guards keep this robust on real footage. The gate is centred on both the Kalman
+prediction and the last observed position: a ball that stops or reverses (a hand, a bounce)
+leaves the ballistic prediction behind, but is still near where it was last seen. And a
+detection whose size differs from the track's by more than `size_ratio_max` is rejected,
+which discards specks and unrelated objects.
 """
 from __future__ import annotations
 
@@ -33,6 +39,8 @@ class GateConfig:
     gate_growth_per_frame_lost_px: float
     gate_covariance_scale: float
     gate_max_radius_px: float
+    size_ratio_max: float
+    observed_gate_growth_size_fraction: float
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,8 @@ class Track:
         self.kf = KalmanFilter(cfg.kalman, detection.center)
         self.machine = TrackStateMachine(track_id, cfg.state_machine, frame_idx, timestamp_s, listeners)
         self.size: Point = detection.size
+        # Last two observed (timestamp, center) pairs, for an agile velocity estimate.
+        self.observed: List[Tuple[float, Point]] = [(timestamp_s, detection.center)]
         self.last_timestamp_s = timestamp_s
         self.trajectory = TrajectoryBuffer(cfg.trajectory.history_length, cfg.trajectory.velocity_window)
 
@@ -148,28 +158,66 @@ class Tracker:
             return None
         return self.select(max(candidates, key=lambda d: d.confidence), timestamp_s, frame_idx)
 
-    def gate_radius(self, track: Track) -> float:
-        """Base radius (at least `gate_size_scale` object sizes) + growth per missed frame + scaled Kalman uncertainty, capped."""
+    def base_radius(self, track: Track) -> float:
+        """Gate floor: at least `gate_size_scale` object sizes."""
         g = self.cfg.gate
-        base = max(g.gate_base_radius_px, g.gate_size_scale * max(track.size))
+        return max(g.gate_base_radius_px, g.gate_size_scale * max(track.size))
+
+    def gate_radius(self, track: Track) -> float:
+        """Base radius + growth per missed frame + scaled Kalman uncertainty, capped."""
+        g = self.cfg.gate
         radius = (
-            base
+            self.base_radius(track)
             + g.gate_growth_per_frame_lost_px * track.misses
             + g.gate_covariance_scale * track.kf.position_sigma()
         )
         return min(radius, g.gate_max_radius_px)
 
+    def _size_ok(self, track: Track, det: Detection) -> bool:
+        """Detection size is within `size_ratio_max` of the track's (larger box side)."""
+        ratio = max(det.size) / max(max(track.size), 1e-6)
+        limit = self.cfg.gate.size_ratio_max
+        return 1.0 / limit <= ratio <= limit
+
+    def observed_extrapolation(self, track: Track, timestamp_s: float) -> Point:
+        """Last observed center moved along the observed velocity to `timestamp_s`."""
+        t_last, last = track.observed[-1]
+        if len(track.observed) < 2:
+            return last
+        t_prev, prev = track.observed[0]
+        span = t_last - t_prev
+        if span <= 0:
+            return last
+        dt = timestamp_s - t_last
+        return (last[0] + (last[0] - prev[0]) / span * dt, last[1] + (last[1] - prev[1]) / span * dt)
+
     def _associate(
-        self, track: Track, predicted: Point, gate: float, detections: Sequence[Detection]
+        self, track: Track, predicted: Point, gate: float, detections: Sequence[Detection], timestamp_s: float
     ) -> Optional[Detection]:
-        """Nearest same-class, confident detection to the prediction inside the gate."""
-        best, best_dist = None, gate
+        """Nearest same-class, confident, similar-sized detection inside the gate around the Kalman
+        prediction, or inside the (smaller) observed-extrapolation gate. That second gate grows with
+        misses more slowly than the prediction gate and ignores Kalman uncertainty, so it adds little
+        false-positive exposure."""
+        g = self.cfg.gate
+        extrap = self.observed_extrapolation(track, timestamp_s)
+        extrap_radius = min(
+            g.gate_max_radius_px, self.base_radius(track) + g.observed_gate_growth_size_fraction * max(track.size) * track.misses
+        )
+        best, best_dist = None, float("inf")
         for det in detections:
             if det.confidence < self.cfg.confidence_threshold or det.class_id != track.class_id:
                 continue
-            dist = _distance(predicted, det.center)
-            if dist <= best_dist:
-                best, best_dist = det, dist
+            if not self._size_ok(track, det):
+                continue
+            reach = []
+            to_pred = _distance(predicted, det.center)
+            if to_pred <= gate:
+                reach.append(to_pred)
+            to_extrap = _distance(extrap, det.center)
+            if to_extrap <= extrap_radius:
+                reach.append(to_extrap)
+            if reach and min(reach) < best_dist:
+                best, best_dist = det, min(reach)
         return best
 
     def update(self, frame_idx: int, timestamp_s: float, detections: Sequence[Detection]) -> TrackOutput:
@@ -186,10 +234,11 @@ class Tracker:
         predicted: Point = (float(pred[0]), float(pred[1]))
         gate = self.gate_radius(track)
 
-        match = self._associate(track, predicted, gate, detections)
+        match = self._associate(track, predicted, gate, detections, timestamp_s)
         if match is not None:
             track.kf.update(match.center)
             track.size = match.size
+            track.observed = (track.observed + [(timestamp_s, match.center)])[-2:]
             track.machine.on_hit(frame_idx, timestamp_s)
             bbox: Optional[Box] = match.bbox_xyxy
             center = match.center

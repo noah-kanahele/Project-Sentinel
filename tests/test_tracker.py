@@ -141,3 +141,40 @@ def test_gate_scales_with_object_size(cfg):
     cov = cfg["tracker"]["gate_covariance_scale"] * small.subject.kf.position_sigma()
     assert small.gate_radius(small.subject) == pytest.approx(floor + cov)
     assert big.gate_radius(big.subject) >= cfg["tracker"]["gate_size_scale"] * 200.0
+
+
+def test_tracker_follows_sudden_reversal_like_a_throw(cfg):
+    """A hand drops the ball, then flings it upward. The smoothed Kalman velocity still says
+    'falling', but the last observed velocity already says 'rising', and the ball stays tracked."""
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    dt, size = 1 / 30, 100.0
+    y = 300.0
+    tracker.select(det(400, y, size=size), 0.0, 0)
+    steps = [20.0] * 25 + [-20.0, -50.0] + [-75.0] * 8  # px per frame; reverses within two frames
+    observed_after = []
+    for i, step in enumerate(steps, start=1):
+        y += step
+        out = tracker.update(i, i * dt, [det(400, y, size=size)])
+        if i > 25:
+            observed_after.append(out.observed)
+    assert all(observed_after) and out.track_id == 1 and out.state == S.TRACKING
+
+
+def test_size_mismatch_detection_is_rejected(cfg):
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    tracker.select(det(300, 300, size=100.0), 0.0, 0)
+    for i in range(1, 4):
+        tracker.update(i, i / 30, [det(300, 300, size=100.0)])
+    speck = det(305, 300, size=16.0)  # right on the ball, but 1/6 of its size
+    assert not tracker.update(4, 4 / 30, [speck]).observed
+    assert tracker.update(5, 5 / 30, [det(300, 300, size=60.0)]).observed  # within 2x is fine
+
+
+def test_observed_extrapolation_follows_last_two_hits(cfg):
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    tracker.select(det(100, 100), 0.0, 0)
+    tracker.update(0, 0.0, [det(100, 100)])
+    tracker.update(1, 0.1, [det(120, 100)])
+    t = tracker.subject
+    assert tracker.observed_extrapolation(t, 0.2) == pytest.approx((140.0, 100.0))
+    assert tracker.observed_extrapolation(t, 0.1) == pytest.approx((120.0, 100.0))

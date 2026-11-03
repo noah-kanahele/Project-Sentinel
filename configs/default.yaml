@@ -33,6 +33,8 @@ tracker:
   gate_growth_per_frame_lost_px: 2    # added per consecutive missed frame (see README sweep)
   gate_covariance_scale: 3.0          # sigmas of predicted-position uncertainty added to the gate (0 disables)
   gate_max_radius_px: 400
+  observed_gate_growth_size_fraction: 0.1  # observed-extrapolation gate grows this fraction of the object size per missed frame
+  size_ratio_max: 2.0                 # reject detections smaller/larger than the track by more than this factor
 
 kalman:
   process_noise_jerk: 500.0           # white-jerk spectral density, px^2/s^5
