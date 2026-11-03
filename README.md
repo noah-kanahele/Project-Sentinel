@@ -116,7 +116,8 @@ Sweeps used 20-30 seeds per cell on the synthetic ball (60 FPS, parabola, 2 px c
 
 | parameter | value | note |
 |---|---|---|
-| `gate_base_radius_px` | 40 | 20 to 60 behaved similarly once growth was small |
+| `gate_base_radius_px` | 40 | floor; 20 to 60 behaved similarly once growth was small |
+| `gate_size_scale` | 1.0 | gate is at least one object size wide; added after real footage (below) |
 | `gate_growth_per_frame_lost_px` | **2** | was 12 in the first draft; see below |
 | `gate_covariance_scale` | 3.0 | adaptive margin from Kalman uncertainty |
 | `process_noise_jerk` / `measurement_noise_px` | 500 / 3.0 | 50 to 500 equivalent; 5000+ hurts badly |
@@ -161,6 +162,14 @@ Under harsher conditions (6 px noise, 3 ms timestamp jitter, 10% dropouts, 0.2 F
 reacquisition stayed at 100% for occlusions up to 15 frames and 93% at 30 frames.
 The weak spot is long occlusions with many false positives (30 frames, 0.5 FP/frame: 83%).
 
+**Real-footage fix (gate size).** On a 186 px pink gumball being pushed around a table (not
+ballistic), both YOLO and the color detector lost the track at frame 113 even though the detector
+saw the ball in every frame. The ball changed direction, the prediction lagged 80-100 px, and the
+fixed 50 px gate rejected the true detection. The synthetic ball is only 24 px, so the fixed pixel
+gate never showed the problem. The gate is now at least `gate_size_scale` object sizes (larger
+box side), which holds all 162 frames with no losses. Synthetic sweep results are identical, since
+a 24 px ball stays under the 40 px floor.
+
 ## Design decisions (ambiguities resolved the simple way)
 
 - Package lives at the repo root (`src/edge_vision/`); the repo is "Project Sentinel", the Python
@@ -183,7 +192,8 @@ The weak spot is long occlusions with many false positives (30 frames, 0.5 FP/fr
 - `YoloDetector` has only been tried on a few short phone clips. On a pink gumball it labeled
   the ball "orange" (COCO 49) rather than "sports ball" (32), and on a small, motion-blurred green
   ball it gave too few detections to confirm a track. The color detector exists for such cases.
-- No clip yet has a full throw-and-occlude arc with the ball in frame throughout.
+- No clip yet has a full throw-and-occlude arc with the ball in frame throughout. The gumball clip
+  is a rolling/pushed ball with no occlusion, so it tests the gate but not reacquisition.
 - The click-to-select display window is untested (`pick_clicked` and overlay drawing are tested).
 - No real-video tuning: the defaults come from synthetic data only.
 
