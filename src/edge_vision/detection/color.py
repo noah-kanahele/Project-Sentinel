@@ -25,12 +25,15 @@ class ColorDetectorConfig:
     min_area_px: float
     min_fill_ratio: float
     max_aspect_ratio: float
+    confident_area_px: float
 
 
 class ColorBlobDetector(Detector):
     """Thresholds an HSV range, then keeps round-ish blobs as detections.
 
-    Confidence is the blob's fill ratio relative to a perfect circle, capped at 1. If
+    Confidence is the blob's fill ratio relative to a perfect circle (capped at 1), scaled down
+    for blobs smaller than `confident_area_px`, so a tiny perfectly-round speck cannot outrank a
+    real ball when the tracker picks the highest-confidence detection. If
     `hue_min > hue_max` the hue range wraps around 0 (reds and pinks).
     """
 
@@ -69,6 +72,6 @@ class ColorBlobDetector(Detector):
             fill = area / float(w * h)
             if fill < c.min_fill_ratio or max(w, h) / float(min(w, h)) > c.max_aspect_ratio:
                 continue
-            confidence = min(1.0, fill / CIRCLE_FILL_RATIO)
+            confidence = min(1.0, fill / CIRCLE_FILL_RATIO) * min(1.0, area / c.confident_area_px)
             detections.append(Detection((float(x), float(y), float(x + w), float(y + h)), confidence, c.class_id))
         return detections

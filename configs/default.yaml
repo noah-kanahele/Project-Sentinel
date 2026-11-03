@@ -19,6 +19,7 @@ color_detector:
   min_area_px: 200            # smallest blob accepted (pixels)
   min_fill_ratio: 0.5         # blob area / bounding-box area (a circle is ~0.785)
   max_aspect_ratio: 1.8       # longer side / shorter side of the bounding box
+  confident_area_px: 400      # blobs smaller than this get proportionally lower confidence
 
 # Counts of CONSECUTIVE frames without an associated detection.
 state_machine:

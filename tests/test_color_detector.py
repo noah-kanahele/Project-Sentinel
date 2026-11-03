@@ -98,3 +98,15 @@ def test_color_detector_feeds_tracker_through_occlusion(detector, cfg):
     assert {o.track_id for o in outputs} == {1}
     assert any(o.state == TrackState.TEMPORARILY_LOST for o in outputs)
     assert outputs[-1].state == TrackState.TRACKING and outputs[-1].observed
+
+
+def test_tiny_speck_cannot_outrank_the_ball(detector, cfg):
+    """Regression: a 16 px speck used to score 1.0 and beat a real ball (0.97) in auto-select."""
+    img = canvas()
+    cv2.circle(img, (300, 200), 55, hsv_bgr(45), -1)  # the ball
+    cv2.rectangle(img, (100, 100), (116, 116), hsv_bgr(45), -1)  # 16 x 16 speck, fill ratio 1.0
+    dets = detector.detect(img)
+    assert len(dets) == 2
+    ball, speck = sorted(dets, key=lambda d: d.size[0], reverse=True)
+    assert ball.confidence > speck.confidence
+    assert max(dets, key=lambda d: d.confidence) is ball
