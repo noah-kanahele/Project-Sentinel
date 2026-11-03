@@ -52,6 +52,18 @@ evaluation:
   reacq_deadline_frames: 10           # frames after occlusion ends in which reacquisition must happen
   occlusion_buckets: [[1, 5], [6, 10], [11, 20], [21, null]]
 
+realtime:                          # pass/fail thresholds for scripts/run_realtime.py
+  target_p99_latency_ms: 50          # capture -> tracker output, 99th percentile
+  max_drop_fraction: 0.01            # frames overwritten before processing
+  max_deadline_miss_fraction: 0.01   # frames whose processing took longer than one frame period
+
+accuracy:                          # scoring against labeled clips (scripts/evaluate_accuracy.py)
+  center_tolerance_fraction: 0.5     # tracker center must be within this fraction of the ball's size
+  min_tolerance_px: 10               # ...but never tighter than this
+  reacq_deadline_frames: 10          # frames after the ball reappears to hold it again with the same id
+  target_hold_rate: 0.99
+  confidence_z: 1.96                 # Wilson interval z (1.96 = 95%)
+
 synthetic:
   fps: 60.0
   num_frames: 150

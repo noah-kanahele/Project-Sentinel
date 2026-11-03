@@ -55,3 +55,22 @@ def test_timestamp_jitter_stays_monotonic(cfg):
     ts = [f.timestamp_s for f in seq.frames]
     assert all(b > a for a, b in zip(ts, ts[1:]))
     assert not np.allclose(np.diff(ts), 1.0 / seq.config.fps)
+
+
+def test_config_extends_merges_over_base(tmp_path):
+    from edge_vision.config import load_config
+
+    (tmp_path / "base.yaml").write_text("a:\n  x: 1\n  y: 2\nb: 3\n")
+    (tmp_path / "child.yaml").write_text("extends: base.yaml\na:\n  y: 20\nc: 4\n")
+    assert load_config(tmp_path / "child.yaml") == {"a": {"x": 1, "y": 20}, "b": 3, "c": 4}
+
+
+def test_gumball_config_inherits_default():
+    from pathlib import Path
+
+    from edge_vision.config import load_config
+
+    root = Path(__file__).resolve().parents[1] / "configs"
+    default, gumball = load_config(root / "default.yaml"), load_config(root / "gumball.yaml")
+    assert gumball["detection"]["class_id"] == 49 and default["detection"]["class_id"] == 32
+    assert gumball["tracker"] == default["tracker"]

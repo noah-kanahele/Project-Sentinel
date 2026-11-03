@@ -1,75 +1,13 @@
-# Test config for the pink gumball clips. YOLO labels it "orange" (COCO 49), not "sports ball" (32);
-# the color_detector range is the measured gumball color for --detector color.
-# Every tunable threshold lives here. Distances are pixels, times are seconds,
-# "frames" are counted in processed frames (never wall-clock).
+# Pink gumball test clips. YOLO labels the gumball "orange" (COCO 49), not "sports ball" (32);
+# the color_detector range is its measured color (hue 6-10, sat 77-138, val 111-161).
+extends: default.yaml
 
 detection:
-  model: yolo11n.pt
-  class_id: 49                  # COCO "orange" (YOLO's label for the gumball)
+  class_id: 49
   confidence_threshold: 0.15
-  image_size: 640
-  device: cpu
 
-# HSV color-blob detector (--detector color). OpenCV hue is 0-179: green ~35-85, orange ~5-20.
-# If hue_min > hue_max the range wraps around 0 (use for red/pink).
 color_detector:
-  hue_min: 3                  # gumball measured at hue 6-10, sat 77-138, val 111-161
+  hue_min: 3
   hue_max: 14
   saturation_min: 50
   value_min: 60
-  morph_kernel_px: 5          # opening kernel; removes specks
-  min_area_px: 200            # smallest blob accepted (pixels)
-  min_fill_ratio: 0.5         # blob area / bounding-box area (a circle is ~0.785)
-  max_aspect_ratio: 1.8       # longer side / shorter side of the bounding box
-
-# Counts of CONSECUTIVE frames without an associated detection.
-state_machine:
-  frames_to_confirm: 3                # hits needed for DETECTED -> TRACKING
-  frames_missed_before_lost: 3        # misses: TRACKING -> TEMPORARILY_LOST
-  frames_lost_before_reacquiring: 6   # further misses: TEMPORARILY_LOST -> REACQUIRING
-  max_frames_before_ended: 60         # total misses: -> TRACK_ENDED (must exceed the sum above)
-
-tracker:
-  gate_base_radius_px: 40             # floor for the gate radius
-  gate_size_scale: 1.0                # gate is at least this many object sizes (larger of box w/h)
-  gate_growth_per_frame_lost_px: 2    # added per consecutive missed frame (see README sweep)
-  gate_covariance_scale: 3.0          # sigmas of predicted-position uncertainty added to the gate (0 disables)
-  gate_max_radius_px: 400
-
-kalman:
-  process_noise_jerk: 500.0           # white-jerk spectral density, px^2/s^5
-  measurement_noise_px: 3.0           # 1-sigma detection center noise
-  initial_velocity_std_px_s: 500.0
-  initial_accel_std_px_s2: 1500.0
-  gravity_prior_px_s2: 0.0            # initial image-y acceleration guess; 0 = learn it from data
-
-trajectory:
-  history_length: 60                  # centers kept for the overlay polyline
-  velocity_window: 5                  # points used for the least-squares velocity estimate
-  arc_horizon_s: 0.5                  # how far ahead the predicted arc is drawn
-  arc_steps: 12
-
-evaluation:
-  adoption_tolerance_px: 25           # matched detection farther than this from truth = false adoption
-  reacq_deadline_frames: 10           # frames after occlusion ends in which reacquisition must happen
-  occlusion_buckets: [[1, 5], [6, 10], [11, 20], [21, null]]
-
-synthetic:
-  fps: 60.0
-  num_frames: 150
-  frame_width: 1280
-  frame_height: 720
-  initial_position: [100.0, 650.0]
-  initial_velocity: [450.0, -700.0]   # px/s (negative y = up)
-  gravity: 600.0                      # px/s^2 downward in image-y
-  timestamp_jitter_s: 0.0
-  center_noise_px: 2.0
-  size_noise_px: 1.0
-  ball_size_px: 24.0
-  confidence_range: [0.55, 0.95]
-  occlusions: [[40, 10]]              # [start_frame, length_frames]
-  false_positive_rate: 0.1            # expected false detections per frame
-  false_positive_confidence_range: [0.3, 0.7]
-  false_positive_size_range: [12.0, 40.0]
-  miss_probability: 0.02
-  seed: 0
