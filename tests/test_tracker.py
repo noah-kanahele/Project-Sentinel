@@ -194,3 +194,92 @@ def test_observed_extrapolation_gate_switches_off_after_max_misses(cfg):
     assert tracker._associate(track, far_prediction, tiny_gate, [candidate], 0.3) is candidate
     track.machine.misses = cfg["tracker"]["observed_gate_max_misses"] + 1
     assert tracker._associate(track, far_prediction, tiny_gate, [candidate], 0.3) is None
+
+
+def confirmed_then_lost(cfg, size=100.0, lost_frames=15):
+    """A tracker that held a ball at (300, 300), then lost it long enough to be REACQUIRING."""
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    tracker.select(det(300, 300, size=size), 0.0, 0)
+    for i in range(1, 6):
+        tracker.update(i, i / 30, [det(300, 300, size=size)])
+    for i in range(6, 6 + lost_frames):
+        tracker.update(i, i / 30, [])
+    assert tracker.subject.state == S.REACQUIRING
+    return tracker, 6 + lost_frames
+
+
+def test_far_reappearance_is_adopted_after_two_sightings_and_keeps_id(cfg):
+    tracker, i = confirmed_then_lost(cfg)
+    far = det(800, 600, size=100.0)  # ~580 px away: beyond the 400 px gate cap, inside the search radius
+    first = tracker.update(i, i / 30, [far])
+    assert not first.observed  # a single sighting is not enough
+    second = tracker.update(i + 1, (i + 1) / 30, [det(805, 604, size=100.0)])
+    assert second.observed and second.track_id == 1 and second.state == S.TRACKING
+    assert second.pred_xy is not None
+    # the motion estimate restarted on the ball instead of continuing a runaway prediction
+    assert np.linalg.norm(tracker.subject.kf.velocity) < 100
+
+
+def test_single_far_detection_is_never_adopted(cfg):
+    tracker, i = confirmed_then_lost(cfg)
+    outs = [tracker.update(i, i / 30, [det(800, 600, size=100.0)])]
+    for k in range(1, 12):  # ...and then it never appears again
+        outs.append(tracker.update(i + k, (i + k) / 30, []))
+    assert not any(o.observed for o in outs)
+
+
+def test_flickering_ball_is_confirmed_across_a_gap_when_the_window_allows(cfg):
+    """The default window is 1 (consecutive frames); a wider window is an option that trades
+    extra false-positive adoptions for tolerance of a ball that flickers in and out."""
+    cfg["tracker"]["reacquire_confirm_window_frames"] = 3
+    tracker, i = confirmed_then_lost(cfg)
+    assert not tracker.update(i, i / 30, [det(800, 600, size=100.0)]).observed
+    assert not tracker.update(i + 1, (i + 1) / 30, []).observed  # motion blur: no detection this frame
+    out = tracker.update(i + 2, (i + 2) / 30, [det(760, 580, size=100.0)])  # moved ~45 px in two frames
+    assert out.observed and out.track_id == 1
+
+
+def test_sightings_too_far_apart_in_time_are_not_confirmed(cfg):
+    tracker, i = confirmed_then_lost(cfg)
+    window = cfg["tracker"]["reacquire_confirm_window_frames"]
+    tracker.update(i, i / 30, [det(800, 600, size=100.0)])
+    for k in range(1, window + 2):
+        tracker.update(i + k, (i + k) / 30, [])
+    assert not tracker.update(i + window + 2, (i + window + 2) / 30, [det(802, 601, size=100.0)]).observed
+
+
+def test_far_detection_beyond_search_radius_is_ignored(cfg):
+    tracker, i = confirmed_then_lost(cfg, size=100.0)
+    radius = max(cfg["tracker"]["gate_max_radius_px"], cfg["tracker"]["reacquire_search_size_scale"] * 100.0)
+    too_far = det(300 + radius + 200, 300, size=100.0)
+    outs = [tracker.update(i + k, (i + k) / 30, [too_far]) for k in range(3)]
+    assert not any(o.observed for o in outs)
+
+
+def test_ball_that_shrank_leaving_the_frame_is_recognised_at_full_size(cfg):
+    """Regression (try2): the remembered size fell to 76 px as the ball left the frame, so its
+    return at 130-220 px was rejected by the 2x size gate."""
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    tracker.select(det(300, 300, size=190.0), 0.0, 0)
+    for i, size in enumerate([190, 190, 190, 150, 118, 94, 76], start=1):  # shrinks gradually, still tracked
+        assert tracker.update(i, i / 30, [det(300, 300, size=float(size))]).observed
+    for k in range(8, 24):
+        tracker.update(k, k / 30, [])
+    tracker.update(24, 24 / 30, [det(900, 600, size=190.0)])
+    out = tracker.update(25, 25 / 30, [det(910, 605, size=200.0)])
+    assert out.observed and out.track_id == 1
+
+
+def test_select_best_prefers_the_larger_detection_on_a_confidence_tie(cfg):
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    speck, ball = det(100, 100, conf=1.0, size=16.0), det(400, 300, conf=1.0, size=120.0)
+    track = tracker.select_best([speck, ball], 0.0, 0)
+    assert track.kf.position[0] == pytest.approx(400.0)
+
+
+def test_default_window_requires_consecutive_sightings(cfg):
+    assert cfg["tracker"]["reacquire_confirm_window_frames"] == 1
+    tracker, i = confirmed_then_lost(cfg)
+    tracker.update(i, i / 30, [det(800, 600, size=100.0)])
+    tracker.update(i + 1, (i + 1) / 30, [])  # one empty frame ends the sighting
+    assert not tracker.update(i + 2, (i + 2) / 30, [det(802, 601, size=100.0)]).observed

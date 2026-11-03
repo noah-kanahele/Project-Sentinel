@@ -36,6 +36,10 @@ tracker:
   gate_max_radius_px: 400
   observed_gate_growth_size_fraction: 0.1  # observed-extrapolation gate grows this fraction of the object size per missed frame
   observed_gate_max_misses: 10        # ...and is only used for this many consecutive missed frames
+  reacquire_confirm_size_scale: 1.0   # lost tracks adopt a far detection seen twice in a row within this many object sizes
+  reacquire_confirm_window_frames: 1  # ...on frames at most this far apart (1 = consecutive; 2+ tolerates a flickering ball but admits more false positives)
+  size_memory_frames: 15              # object size is also compared against its largest size over this many hits
+  reacquire_search_size_scale: 6.0    # ...searched within this many object sizes of where the ball was last seen (at least gate_max_radius_px)
   size_ratio_max: 2.0                 # reject detections smaller/larger than the track by more than this factor
 
 kalman:

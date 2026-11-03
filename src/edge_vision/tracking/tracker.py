@@ -9,12 +9,21 @@ prediction and the last observed position: a ball that stops or reverses (a hand
 leaves the ballistic prediction behind, but is still near where it was last seen. And a
 detection whose size differs from the track's by more than `size_ratio_max` is rejected,
 which discards specks and unrelated objects.
+
+A lost track also gets a wide-area reacquisition for balls that reappear far from any
+prediction (a hand carried it somewhere new; a ballistic prediction runs off to nowhere): a
+detection within `max(gate_max_radius_px, reacquire_search_size_scale * object size)` of the last
+observed position is adopted once it is seen
+at roughly the same place twice within a few frames (the allowed travel grows with the frames
+between sightings, since a blurred ball flickers in and out). Random false positives do not repeat
+in place, so a single far detection is still ignored, as the gate requires.
 """
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from edge_vision.config import build_config
 from edge_vision.detection.detector import Detection
@@ -42,6 +51,10 @@ class GateConfig:
     size_ratio_max: float
     observed_gate_growth_size_fraction: float
     observed_gate_max_misses: int
+    reacquire_confirm_size_scale: float
+    reacquire_search_size_scale: float
+    reacquire_confirm_window_frames: int
+    size_memory_frames: int
 
 
 @dataclass(frozen=True)
@@ -105,8 +118,17 @@ class Track:
         self.size: Point = detection.size
         # Last two observed (timestamp, center) pairs, for an agile velocity estimate.
         self.observed: List[Tuple[float, Point]] = [(timestamp_s, detection.center)]
+        self.pending: Optional[Tuple[int, Point]] = None  # (update count, center) of a far candidate seen earlier
+        self.updates = 0  # processed frames, counted per update call
+        self.size_history: Deque[float] = deque([max(detection.size)], maxlen=cfg.gate.size_memory_frames)
         self.last_timestamp_s = timestamp_s
         self.trajectory = TrajectoryBuffer(cfg.trajectory.history_length, cfg.trajectory.velocity_window)
+
+    @property
+    def ref_size(self) -> float:
+        """Recent largest size (larger box side): a ball that briefly shrinks (partly out of frame,
+        blurred) is still compared against how big it really is."""
+        return max(self.size_history)
 
     @property
     def state(self) -> TrackState:
@@ -153,11 +175,11 @@ class Tracker:
         return track
 
     def select_best(self, detections: Sequence[Detection], timestamp_s: float, frame_idx: int = 0) -> Optional[Track]:
-        """Auto-select the highest-confidence detection above the threshold, if any."""
+        """Auto-select the highest-confidence detection above the threshold (ties to the larger box), if any."""
         candidates = [d for d in detections if d.confidence >= self.cfg.confidence_threshold]
         if not candidates:
             return None
-        return self.select(max(candidates, key=lambda d: d.confidence), timestamp_s, frame_idx)
+        return self.select(max(candidates, key=lambda d: (round(d.confidence, 1), max(d.size))), timestamp_s, frame_idx)
 
     def base_radius(self, track: Track) -> float:
         """Gate floor: at least `gate_size_scale` object sizes."""
@@ -176,9 +198,9 @@ class Tracker:
 
     def _size_ok(self, track: Track, det: Detection) -> bool:
         """Detection size is within `size_ratio_max` of the track's (larger box side)."""
-        ratio = max(det.size) / max(max(track.size), 1e-6)
         limit = self.cfg.gate.size_ratio_max
-        return 1.0 / limit <= ratio <= limit
+        side = max(det.size)
+        return any(1.0 / limit <= side / max(ref, 1e-6) <= limit for ref in (max(track.size), track.ref_size))
 
     def observed_extrapolation(self, track: Track, timestamp_s: float) -> Point:
         """Last observed center moved along the observed velocity to `timestamp_s`."""
@@ -224,6 +246,32 @@ class Tracker:
                 best, best_dist = det, min(reach)
         return best
 
+    def _confirm_far(self, track: Track, detections: Sequence[Detection]) -> Optional[Detection]:
+        """Wide-area reacquisition: adopt a detection near the last observed position once the same
+        spot is seen twice within `reacquire_confirm_window_frames` frames. Returns the detection to
+        adopt, if any."""
+        g = self.cfg.gate
+        anchor = track.observed[-1][1]
+        search_radius = max(g.gate_max_radius_px, g.reacquire_search_size_scale * track.ref_size)
+        candidates = [
+            d for d in detections
+            if d.confidence >= self.cfg.confidence_threshold and d.class_id == track.class_id
+            and self._size_ok(track, d) and _distance(anchor, d.center) <= search_radius
+        ]
+        if track.pending is not None and track.updates - track.pending[0] > g.reacquire_confirm_window_frames:
+            track.pending = None
+        if not candidates:
+            return None  # a flickering ball: keep the earlier sighting until the window runs out
+        if track.pending is not None:
+            seen_at, seen_xy = track.pending
+            radius = g.reacquire_confirm_size_scale * track.ref_size * (track.updates - seen_at)
+            agreeing = [d for d in candidates if _distance(seen_xy, d.center) <= radius]
+            if agreeing:
+                track.pending = None
+                return min(agreeing, key=lambda d: _distance(seen_xy, d.center))
+        track.pending = (track.updates, min(candidates, key=lambda d: _distance(anchor, d.center)).center)
+        return None
+
     def update(self, frame_idx: int, timestamp_s: float, detections: Sequence[Detection]) -> TrackOutput:
         """Process one frame of detections; dt comes from timestamps only."""
         track = self.subject
@@ -232,6 +280,7 @@ class Tracker:
         if track.state == TrackState.TRACK_ENDED:
             return TrackOutput(frame_idx, timestamp_s, track.track_id, track.state)
 
+        track.updates += 1
         track.kf.predict(timestamp_s - track.last_timestamp_s)
         track.last_timestamp_s = timestamp_s
         pred = track.kf.position
@@ -239,9 +288,20 @@ class Tracker:
         gate = self.gate_radius(track)
 
         match = self._associate(track, predicted, gate, detections, timestamp_s)
+        snapped = False
         if match is not None:
-            track.kf.update(match.center)
+            track.pending = None
+        elif track.state in (TrackState.TEMPORARILY_LOST, TrackState.REACQUIRING):
+            match = self._confirm_far(track, detections)
+            snapped = match is not None
+        if match is not None:
+            if snapped:  # the old motion estimate is meaningless here: restart the filter on the ball
+                track.kf = KalmanFilter(self.cfg.kalman, match.center)
+                track.observed = []
+            else:
+                track.kf.update(match.center)
             track.size = match.size
+            track.size_history.append(max(match.size))
             track.observed = (track.observed + [(timestamp_s, match.center)])[-2:]
             track.machine.on_hit(frame_idx, timestamp_s)
             bbox: Optional[Box] = match.bbox_xyxy
