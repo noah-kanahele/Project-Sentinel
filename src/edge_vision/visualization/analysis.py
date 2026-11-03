@@ -1,8 +1,9 @@
 """Slow-motion analysis video: the tracker's view of the ball's movement, written to a file."""
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
-from typing import List, Sequence, Tuple, Union
+from typing import Deque, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
@@ -24,13 +25,17 @@ def _pt(p: Point) -> Tuple[int, int]:
 
 
 class AnalysisWriter:
-    """Draws each processed frame with the whole path so far and writes it at a slowed frame rate.
+    """Draws each processed frame with the path so far (or its last `trail_length` points) and writes it
+    at a slowed frame rate.
 
     The slowdown only changes the playback rate of the written file (source fps / slowdown);
     tracking itself never depends on it.
     """
 
-    def __init__(self, path: Union[str, Path], source_fps: float, size: Tuple[int, int], slowdown: float) -> None:
+    def __init__(
+        self, path: Union[str, Path], source_fps: float, size: Tuple[int, int], slowdown: float,
+        trail_length: Optional[int] = None,
+    ) -> None:
         if slowdown <= 0 or source_fps <= 0:
             raise ValueError("slowdown and source_fps must be positive")
         self.path = Path(path)
@@ -40,7 +45,8 @@ class AnalysisWriter:
         self._writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, size)  # type: ignore[attr-defined]
         if not self._writer.isOpened():
             raise OSError(f"Could not open analysis video for writing: {self.path}")
-        self._trail: List[Tuple[Point, bool]] = []  # (center, observed)
+        # (center, observed); `trail_length` bounds how much of the path is drawn (None = the whole path)
+        self._trail: Deque[Tuple[Point, bool]] = deque(maxlen=trail_length or None)
 
     def write(self, image: np.ndarray, output: TrackOutput, detections: Sequence[Detection], tracker: Tracker) -> None:
         """Annotate a copy of `image` and append it to the video."""

@@ -93,7 +93,7 @@ python scripts/run_video.py data/clip.mov --analysis logs/analysis.mp4 --slowdow
 
 After the normal run, `--analysis` also writes an annotated video at `source fps / slowdown`
 (default 4x slower; `--play-analysis` opens it in a window when processing finishes, `q` stops
-it). It shows the whole path so far as a cyan line, filled dots where the ball was **observed**
+it). It shows the recent path (the last `analysis.trail_frames` = 120 points; `--trail-frames N`, or 0 for the whole path) as a cyan line, filled dots where the ball was **observed**
 and hollow magenta markers where the position was **predicted**, a yellow velocity arrow, the
 predicted arc, the tracker box and state, and a readout of frame, timestamp, state and speed.
 The slowdown only changes the file's playback rate; tracking never uses it.

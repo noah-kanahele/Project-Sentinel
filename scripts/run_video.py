@@ -34,6 +34,7 @@ def main() -> None:
     ap.add_argument("--csv", help="write per-frame telemetry here (events go to <name>.events.csv)")
     ap.add_argument("--analysis", help="write a slow-motion annotated analysis video to this .mp4 path")
     ap.add_argument("--slowdown", type=float, default=4.0, help="analysis video playback slowdown factor (default 4)")
+    ap.add_argument("--trail-frames", type=int, help="points of path drawn in the analysis video (0 = all; default from config)")
     ap.add_argument("--play-analysis", action="store_true", help="play the analysis video after processing (needs --analysis)")
     ap.add_argument("--display", action="store_true", help="show the overlay window (click to select)")
     args = ap.parse_args()
@@ -51,7 +52,8 @@ def main() -> None:
 
     with TelemetryLogger(args.csv) as logger, VideoFileSource(args.video) as source:
         tracker = Tracker(TrackerConfig.from_dict(cfg), event_sink=logger.log_event)
-        writer = AnalysisWriter(args.analysis, source.nominal_fps, source.size, args.slowdown) if args.analysis else None
+        trail = args.trail_frames if args.trail_frames is not None else cfg["analysis"]["trail_frames"]
+        writer = AnalysisWriter(args.analysis, source.nominal_fps, source.size, args.slowdown, trail) if args.analysis else None
         try:
             outputs = process_stream(source, detector, tracker, logger, args.display, writer)
         finally:

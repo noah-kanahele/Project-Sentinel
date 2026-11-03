@@ -55,6 +55,9 @@ trajectory:
   arc_horizon_s: 0.5                  # how far ahead the predicted arc is drawn
   arc_steps: 12
 
+analysis:                          # slow-motion analysis video (scripts/run_video.py --analysis)
+  trail_frames: 120                  # path length drawn (0 = the whole path)
+
 evaluation:
   adoption_tolerance_px: 25           # matched detection farther than this from truth = false adoption
   reacq_deadline_frames: 10           # frames after occlusion ends in which reacquisition must happen

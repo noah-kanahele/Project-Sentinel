@@ -40,3 +40,13 @@ def test_analysis_frames_are_annotated(cfg, tmp_path):
 def test_invalid_slowdown_rejected(tmp_path):
     with pytest.raises(ValueError):
         AnalysisWriter(tmp_path / "x.mp4", 30.0, (640, 480), 0.0)
+
+
+def test_trail_length_bounds_the_drawn_path(cfg, tmp_path):
+    tracker = Tracker(TrackerConfig.from_dict(cfg))
+    with AnalysisWriter(tmp_path / "a.mp4", SOURCE_FPS, (SIZE[1], SIZE[0]), 1.0, trail_length=10) as writer:
+        process_stream(RenderedSource(n=40), ColorBlobDetector.from_config(cfg), tracker, analysis=writer)
+        assert len(writer._trail) == 10
+    unbounded = AnalysisWriter(tmp_path / "b.mp4", SOURCE_FPS, (SIZE[1], SIZE[0]), 1.0)
+    assert unbounded._trail.maxlen is None
+    unbounded.close()
