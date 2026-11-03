@@ -24,6 +24,7 @@ src/edge_vision/
   telemetry/                CSV logger (per-frame rows + transition events)
   visualization/            OpenCV overlay and slow-motion analysis video writer/player
   pipeline.py               source -> detector -> tracker -> overlay/CSV loop (offline)
+  recording.py              FrameRecorder: raw/annotated video + real-timestamp sidecar
   realtime.py               real-time harness: capture thread, latest-frame mailbox, drop/latency stats
   evaluation/               ground-truth labels, autolabel, accuracy scoring with confidence intervals
 scripts/                    run_video.py, run_realtime.py, run_synthetic.py, evaluate_tracks.py,
@@ -122,6 +123,19 @@ Measured on an Apple M1 (CPU only), 1080p 28 FPS gumball clip, 1x replay:
 The tracker itself costs about 0.14 ms per frame. YOLO on laptop CPU cannot hold 30 FPS while
 another thread decodes 1080p video; that is the job of the Jetson TensorRT export. The webcam
 path (`CameraSource`) is unit-tested with a fake camera but has not been run on a real webcam yet.
+
+**Record a session for analysis.** Add `--record` to save exactly what the camera saw:
+
+```bash
+python scripts/run_realtime.py --camera 0 --detector color --display --record data/try1
+```
+
+This writes `data/try1.mp4` (raw frames, no drawing), `data/try1.timestamps.csv` (the real
+per-frame times; `VideoFileSource` picks this sidecar up automatically, so replays keep the real
+frame spacing) and `data/try1_overlay.mp4` (what the tracker drew live, including any frames it
+dropped). The raw file can be re-run with any detector or config, labeled with
+`label_clip.py`, scored with `evaluate_accuracy.py` or turned into a slow-motion video with
+`run_video.py --analysis`. Press `q` to stop and finish the recording.
 
 **How accurate is it?** Accuracy needs ground truth:
 
