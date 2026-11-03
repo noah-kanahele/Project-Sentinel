@@ -22,7 +22,7 @@ src/edge_vision/
   motion/                   trajectory history, velocity estimate, predicted arc
   sim/                      synthetic.py (generator), runner.py (drive tracker over a sequence)
   telemetry/                CSV logger (per-frame rows + transition events)
-  visualization/            OpenCV overlay (drawing only)
+  visualization/            OpenCV overlay and slow-motion analysis video writer/player
   pipeline.py               source -> detector -> tracker -> overlay/CSV loop
 scripts/                    run_video.py, run_synthetic.py, evaluate_tracks.py
 tests/
@@ -74,6 +74,19 @@ millisecond per frame). Its hue/saturation/value range and blob filters live und
 `color_detector:` in the config; the default range is green. For red/pink set `hue_min` greater
 than `hue_max` (the range wraps around 0). Detections from either detector are emitted with
 `detection.class_id`, so the tracker's class filter matches.
+
+### Slow-motion analysis video
+
+```bash
+python scripts/run_video.py data/clip.mov --analysis logs/analysis.mp4 --slowdown 4 --play-analysis
+```
+
+After the normal run, `--analysis` also writes an annotated video at `source fps / slowdown`
+(default 4x slower; `--play-analysis` opens it in a window when processing finishes, `q` stops
+it). It shows the whole path so far as a cyan line, filled dots where the ball was **observed**
+and hollow magenta markers where the position was **predicted**, a yellow velocity arrow, the
+predicted arc, the tracker box and state, and a readout of frame, timestamp, state and speed.
+The slowdown only changes the file's playback rate; tracking never uses it.
 
 Click a detection in the window to choose the subject; otherwise the highest-confidence sports
 ball is auto-selected whenever there is no live subject (including after a track ends). `q`
