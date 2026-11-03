@@ -10,6 +10,8 @@ from typing import Iterator, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+from edge_vision.recording import load_timestamps
+
 
 @dataclass
 class Frame:
@@ -46,7 +48,7 @@ class FrameSource(ABC):
 
 
 class VideoFileSource(FrameSource):
-    """Reads frames from a video file using the container's own timestamps."""
+    """Reads frames from a video file using the container's timestamps (or a recorded sidecar, if present)."""
 
     def __init__(self, path: Union[str, Path]) -> None:
         self._cap = cv2.VideoCapture(str(path))
@@ -59,12 +61,17 @@ class VideoFileSource(FrameSource):
         )
         self._index = 0
         self._last_ts: Optional[float] = None
+        # A sidecar written by FrameRecorder keeps the real frame spacing of a live recording.
+        self._recorded_ts = load_timestamps(path)
 
     def read(self) -> Optional[Frame]:
         ok, image = self._cap.read()
         if not ok:
             return None
-        ts = self._cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        if self._recorded_ts is not None and self._index < len(self._recorded_ts):
+            ts = self._recorded_ts[self._index]
+        else:
+            ts = self._cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         # Some containers report 0 or repeated timestamps; keep the clock strictly increasing.
         if self._last_ts is not None and ts <= self._last_ts:
             step = 1.0 / self.nominal_fps if self.nominal_fps > 0 else 0.0
