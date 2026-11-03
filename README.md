@@ -1,0 +1,183 @@
+# Project Sentinel (edge-vision)
+
+Laptop-side foundation of a real-time object detection and tracking pipeline that will later
+deploy to an NVIDIA Jetson Orin Nano Super. The demo target is tracking a thrown sports ball
+through brief occlusion with a **persistent ID**, using a gravity-aware Kalman predictor to drive
+reacquisition. The hard part, and the part built and unit-tested here, is the tracking state
+machine and reacquisition logic.
+
+Everything runs on CPU against synthetic data and video files. Nothing assumes CUDA, a Jetson,
+or a live camera. Every frame carries a `timestamp_s` from its source and all `dt` comes from
+those timestamps, never wall-clock (wall-clock is used only to report latency).
+
+## Layout
+
+```
+configs/default.yaml        every tunable threshold
+src/edge_vision/
+  camera/                   FrameSource ABC, VideoFileSource, CameraSource stub
+  detection/                Detection, Detector ABC, YoloDetector (ultralytics, optional import)
+  tracking/                 kalman.py, state_machine.py, tracker.py, metrics.py
+  motion/                   trajectory history, velocity estimate, predicted arc
+  sim/                      synthetic.py (generator), runner.py (drive tracker over a sequence)
+  telemetry/                CSV logger (per-frame rows + transition events)
+  visualization/            OpenCV overlay (drawing only)
+  pipeline.py               source -> detector -> tracker -> overlay/CSV loop
+scripts/                    run_video.py, run_synthetic.py, evaluate_tracks.py
+tests/
+```
+
+## Setup
+
+Tested on Python 3.9; the code uses `from __future__ import annotations` so it also runs on 3.10+
+(JetPack 6 ships 3.10).
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"            # numpy, opencv-python, pyyaml, pytest
+pip install -e ".[detection]"      # only for run_video.py (pulls in ultralytics + torch)
+```
+
+## Run the tests
+
+```bash
+python -m pytest -q
+```
+
+The tests need no ultralytics: the end-to-end video test renders an mp4 with OpenCV and uses a
+stub detector.
+
+## Run the synthetic sweep
+
+```bash
+python scripts/run_synthetic.py                  # occlusion length x false-positive rate
+python scripts/run_synthetic.py --sweep gate     # gate base radius x growth per lost frame
+python scripts/run_synthetic.py --sweep kalman   # process noise x measurement noise
+python scripts/evaluate_tracks.py --occlusion 3 8 15 30 --fp-rate 0.2 --seeds 40   # detailed metrics
+python scripts/evaluate_tracks.py --set tracker.gate_base_radius_px=30             # any config override
+```
+
+Columns: `reacq` = fraction of occlusions after which the **same track id** was observed again on a
+true detection within `reacq_deadline_frames`; `id_sw` = ID switches; `fp_adopt` = false-positive
+adoption events (tracker matched a detection >25 px from truth); `occl_err` = mean prediction
+error inside occlusions; `err_mean` / `err_p95` = prediction error over all frames (px).
+
+## Run on a video
+
+```bash
+python scripts/run_video.py path/to/clip.mp4 --config configs/default.yaml --csv logs/out.csv --display
+```
+
+Click a detection in the window to choose the subject; otherwise the highest-confidence sports
+ball is auto-selected whenever there is no live subject (including after a track ends). `q`
+quits. The CSV has `frame_idx, timestamp_s, track_id, state, cx, cy, pred_cx, pred_cy,
+confidence, detect_latency_ms, total_latency_ms`; state transitions go to `logs/out.events.csv`.
+`cx, cy` is the observed box center, or the predicted center while the ball is unobserved;
+`confidence` is blank on unobserved frames.
+
+## How tracking works
+
+- **Kalman**: constant-acceleration, state `[x, y, vx, vy, ax, ay]`, white-jerk process noise,
+  Joseph-form update. The acceleration state learns gravity from the data (an optional prior can be
+  set with `gravity_prior_px_s2`). It is predicted every frame with the timestamp delta, so its
+  covariance grows through an occlusion.
+- **State machine**: `DETECTED -> TRACKING -> TEMPORARILY_LOST -> REACQUIRING -> TRACK_ENDED`,
+  driven by consecutive hit/miss counts from the config. Every transition (including creation) is
+  emitted as an event with frame index, timestamp, from/to state and reason.
+- **Association / reacquisition**: nearest same-class, above-threshold detection to the Kalman
+  prediction inside the gate. Gate radius = `base + growth_per_frame_lost * misses +
+  covariance_scale * predicted_position_sigma`, capped. A detection inside the gate inherits the
+  track ID, which is reacquisition. Detections outside the gate are ignored.
+
+## Chosen defaults and why
+
+Sweeps used 20-30 seeds per cell on the synthetic ball (60 FPS, parabola, 2 px center noise,
+2% random dropouts). Final defaults in `configs/default.yaml`:
+
+| parameter | value | note |
+|---|---|---|
+| `gate_base_radius_px` | 40 | 20 to 60 behaved similarly once growth was small |
+| `gate_growth_per_frame_lost_px` | **2** | was 12 in the first draft; see below |
+| `gate_covariance_scale` | 3.0 | adaptive margin from Kalman uncertainty |
+| `process_noise_jerk` / `measurement_noise_px` | 500 / 3.0 | 50 to 500 equivalent; 5000+ hurts badly |
+| state machine | 3 / 3 / 6 / 60 | confirm / lost / reacquiring / ended |
+
+**Gate growth was the big lever.** With 4 occlusion lengths (3, 8, 15, 30) and 0.2 false
+positives per frame (30 seeds), reacquisition vs growth (cov scale 3):
+
+| growth px/frame | reacq | fp_adopt events | err_p95 (px) |
+|---:|---:|---:|---:|
+| 0 | 100.0% | 5 | 4.4 |
+| 2 | 97.5% | 10 | 5.0 |
+| 4 | 96.7% | 16 | 5.4 |
+| 8 | 89.2% | 44 | 230.8 |
+| 12 (old default) | 91.2% | 32 (20 seeds) | 58.6 |
+
+A large gate lets random false positives be adopted during long occlusions, which corrupts the
+Kalman state. The prediction through a gap is already accurate (1-4 px error), so the gate does
+not need to grow fast. I chose 2 rather than the sweep's winner of 0 because the simulator is
+idealized (pure parabola, no drag, no camera motion); real footage has model mismatch and
+needs margin. **Re-tune on real clips.**
+
+Final occlusion x false-positive table (30 seeds per cell, defaults above):
+
+```
+occl_len  fp_rate   reacq  id_sw  fp_adopt  occl_err  err_mean  err_p95
+       3      0.0  100.0%      0         0       1.3       1.4      3.2
+       3      0.1  100.0%      1         1       1.3       1.7      3.2
+       3      0.5  100.0%      0         1       1.6       1.5      3.7
+       8      0.0  100.0%      0         0       1.6       1.4      3.3
+       8      0.1  100.0%      1         1       1.6       1.8      3.3
+       8      0.5  100.0%      0         2       2.2       1.5      3.9
+      15      0.0  100.0%      0         0       2.2       1.5      3.9
+      15      0.1  100.0%      1         1       2.2       1.9      3.8
+      15      0.5  100.0%      0         3       3.6       1.8      4.6
+      30      0.0  100.0%      0         0       3.8       2.0      6.4
+      30      0.1   96.7%      2         2       4.0       5.4      7.7
+      30      0.5   83.3%      2        13       9.7      26.2    195.6
+```
+
+Under harsher conditions (6 px noise, 3 ms timestamp jitter, 10% dropouts, 0.2 FP/frame)
+reacquisition stayed at 100% for occlusions up to 15 frames and 93% at 30 frames.
+The weak spot is long occlusions with many false positives (30 frames, 0.5 FP/frame: 83%).
+
+## Design decisions (ambiguities resolved the simple way)
+
+- Package lives at the repo root (`src/edge_vision/`); the repo is "Project Sentinel", the Python
+  package is `edge_vision`.
+- Frame counts in the state machine are in processed frames, not seconds. `max_frames_before_ended:
+  60` is one second at 60 FPS; revisit if the Jetson runs slower than the camera.
+- A `DETECTED` (unconfirmed) track ends after `frames_missed_before_lost` misses.
+- A single hit in `TEMPORARILY_LOST` / `REACQUIRING` returns the track to `TRACKING` (no
+  re-confirmation). Requiring several hits would cut false adoptions further at the cost of
+  reacquisition latency; not needed by the sweeps.
+- Auto-selection after a track ends creates a **new** ID and counts as an ID switch in metrics.
+- `evaluate_tracks.py` evaluates in-process synthetic scenarios rather than reading CSVs: the
+  required per-frame CSV schema has no "observed" flag, which false-adoption detection needs.
+- Config dataclasses have no defaults; every value must come from YAML (missing/unknown keys raise).
+- A constant-acceleration Kalman model assumes no drag or bounce. The simulator matches it, so
+  synthetic accuracy is optimistic.
+
+## Not verified yet
+
+- `YoloDetector` and `scripts/run_video.py` have **not** been run against real YOLO weights or
+  real footage (ultralytics is not installed on this laptop). Only the import-error path and the
+  surrounding pipeline (with a stub detector) are tested.
+- The click-to-select display window is untested (`pick_clicked` and overlay drawing are tested).
+- No real-video tuning: the defaults come from synthetic data only.
+
+## Jetson porting notes
+
+1. **CameraSource**: implement it with GStreamer (`nvarguscamerasrc` for CSI or `v4l2src` for USB)
+   through `cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)` with an `appsink drop=true max-buffers=1`
+   so latency does not build up. Use the **driver/buffer timestamps** (GStreamer PTS), not
+   `time.time()`, for `Frame.timestamp_s`.
+2. **TensorRT**: export once on the device: `yolo export model=yolo11n.pt format=engine half=True`,
+   then point `detection.model` at the `.engine` file and set `detection.device: 0`. Keep
+   `image_size` identical to the export size.
+3. Re-measure `detect_latency_ms` / `total_latency_ms` (already in the CSV). If real FPS differs
+   from the camera FPS, re-check the frame-count thresholds in `state_machine`.
+4. Re-tune gate growth and Kalman noise on real clips before trusting the synthetic defaults.
+
+First task on the Jetson: get a live `CameraSource` producing driver-timestamped frames, run the
+TensorRT detector on it, and record a throw-and-occlude clip to tune against.
