@@ -8,6 +8,18 @@ detection:
   image_size: 640
   device: cpu
 
+# HSV color-blob detector (--detector color). OpenCV hue is 0-179: green ~35-85, orange ~5-20.
+# If hue_min > hue_max the range wraps around 0 (use for red/pink).
+color_detector:
+  hue_min: 35
+  hue_max: 60
+  saturation_min: 40
+  value_min: 40
+  morph_kernel_px: 5          # opening kernel; removes specks
+  min_area_px: 200            # smallest blob accepted (pixels)
+  min_fill_ratio: 0.5         # blob area / bounding-box area (a circle is ~0.785)
+  max_aspect_ratio: 1.8       # longer side / shorter side of the bounding box
+
 # Counts of CONSECUTIVE frames without an associated detection.
 state_machine:
   frames_to_confirm: 3                # hits needed for DETECTED -> TRACKING
