@@ -1,6 +1,7 @@
 """Frame sources. Every frame carries its own timestamp; consumers never use wall-clock for dt."""
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,13 +79,49 @@ class VideoFileSource(FrameSource):
 
 
 class CameraSource(FrameSource):
-    """Live camera stub. On the Jetson this will wrap GStreamer and use driver timestamps."""
+    """Live camera through OpenCV (laptop webcam, USB camera).
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        raise NotImplementedError("CameraSource is not implemented yet (needs the Jetson camera).")
+    Timestamps are `time.monotonic()` seconds since the first frame, taken right after the
+    driver hands the frame over; that is this source's own clock, not a tracking assumption.
+    On the Jetson, replace this with a GStreamer source that uses the driver's buffer
+    timestamps. `read()` blocks until the next frame, so it paces itself.
+    """
 
-    def read(self) -> Optional[Frame]:  # pragma: no cover
-        raise NotImplementedError
+    def __init__(
+        self,
+        device: Union[int, str] = 0,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[float] = None,
+    ) -> None:
+        self._cap = cv2.VideoCapture(device)
+        if not self._cap.isOpened():
+            raise IOError(f"Could not open camera {device!r} (on macOS, allow camera access for your terminal app)")
+        if width:
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        if height:
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if fps:
+            self._cap.set(cv2.CAP_PROP_FPS, fps)
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # ignored by some backends; avoids a stale-frame queue
+        self.nominal_fps: float = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        self.size: Tuple[int, int] = (
+            int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        )
+        self._index = 0
+        self._t0: Optional[float] = None
 
-    def close(self) -> None:  # pragma: no cover
-        raise NotImplementedError
+    def read(self) -> Optional[Frame]:
+        ok, image = self._cap.read()
+        if not ok:
+            return None
+        now = time.monotonic()
+        if self._t0 is None:
+            self._t0 = now
+        frame = Frame(index=self._index, timestamp_s=now - self._t0, image=image)
+        self._index += 1
+        return frame
+
+    def close(self) -> None:
+        self._cap.release()

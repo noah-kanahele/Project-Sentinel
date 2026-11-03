@@ -67,9 +67,50 @@ def test_missing_video_raises(tmp_path):
         VideoFileSource(tmp_path / "nope.mp4")
 
 
-def test_camera_source_is_a_stub():
-    with pytest.raises(NotImplementedError):
-        CameraSource()
+class FakeCapture:
+    """Stands in for cv2.VideoCapture so CameraSource can be tested without a camera."""
+
+    def __init__(self, device, opened=True, frames=3):
+        self._opened, self._left, self.released = opened, frames, False
+
+    def isOpened(self):
+        return self._opened
+
+    def set(self, prop, value):
+        return True
+
+    def get(self, prop):
+        return {cv2.CAP_PROP_FPS: 30.0, cv2.CAP_PROP_FRAME_WIDTH: 64.0, cv2.CAP_PROP_FRAME_HEIGHT: 48.0}.get(prop, 0.0)
+
+    def read(self):
+        if self._left == 0:
+            return False, None
+        self._left -= 1
+        return True, np.zeros((48, 64, 3), np.uint8)
+
+    def release(self):
+        self.released = True
+
+
+def test_camera_source_timestamps_start_at_zero_and_increase(monkeypatch):
+    import time
+
+    monkeypatch.setattr(cv2, "VideoCapture", FakeCapture)
+    with CameraSource(0) as cam:
+        assert cam.nominal_fps == 30.0 and cam.size == (64, 48)
+        frames = []
+        for f in cam:
+            frames.append(f)
+            time.sleep(0.002)
+    assert [f.index for f in frames] == [0, 1, 2]
+    assert frames[0].timestamp_s == 0.0
+    assert all(b.timestamp_s > a.timestamp_s for a, b in zip(frames, frames[1:]))
+
+
+def test_camera_source_unopenable_raises(monkeypatch):
+    monkeypatch.setattr(cv2, "VideoCapture", lambda device: FakeCapture(device, opened=False))
+    with pytest.raises(IOError, match="camera"):
+        CameraSource(0)
 
 
 def test_end_to_end_video_with_csv(clip, cfg, tmp_path):
