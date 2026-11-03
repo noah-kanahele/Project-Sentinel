@@ -207,6 +207,9 @@ Sweeps used 20-30 seeds per cell on the synthetic ball (60 FPS, parabola, 2 px c
 | `observed_gate_growth_size_fraction` | 0.1 | extrapolation gate grows 10% of object size per missed frame |
 | `observed_gate_max_misses` | 10 | extrapolation gate only for the first 10 missed frames (5 is not enough on the real clip; unlimited costs 10 points on long occlusions) |
 | `size_ratio_max` | 2.0 | reject detections more than 2x larger/smaller than the track |
+| `size_memory_frames` | 15 | a detection may also match the track's largest recent size (a ball that shrinks leaving the frame) |
+| `reacquire_search_size_scale` / `_confirm_size_scale` | 6.0 / 1.0 | a lost track adopts a far detection seen twice in a row, within 6 object sizes of where it vanished |
+| `reacquire_confirm_window_frames` | 1 | consecutive-frame confirmation; 2-5 tolerate flicker but admit more false positives (below) |
 | `gate_growth_per_frame_lost_px` | **2** | was 12 in the first draft; see below |
 | `gate_covariance_scale` | 3.0 | adaptive margin from Kalman uncertainty |
 | `process_noise_jerk` / `measurement_noise_px` | 500 / 3.0 | 50 to 500 equivalent; 5000+ hurts badly |
@@ -235,21 +238,23 @@ Final occlusion x false-positive table (30 seeds per cell, defaults above):
 occl_len  fp_rate   reacq  id_sw  fp_adopt  occl_err  err_mean  err_p95
        3      0.0  100.0%      0         0       1.3       1.4      3.2
        3      0.1  100.0%      1         1       1.3       1.7      3.2
-       3      0.5  100.0%      0         1       1.7       1.5      3.9
+       3      0.5  100.0%      0         0       1.4       1.3      3.4
        8      0.0  100.0%      0         0       1.6       1.4      3.3
        8      0.1  100.0%      1         1       1.6       1.8      3.3
-       8      0.5  100.0%      0         2       2.3       1.6      4.0
+       8      0.5  100.0%      0         1       1.9       1.4      3.5
       15      0.0  100.0%      0         0       2.2       1.5      3.9
       15      0.1  100.0%      1         1       2.2       1.9      3.8
-      15      0.5  100.0%      0         3       3.8       1.8      4.6
+      15      0.5  100.0%      0         2       3.2       1.6      4.2
       30      0.0  100.0%      0         0       3.8       2.0      6.4
-      30      0.1   96.7%      2         2       4.0       5.4      7.7
-      30      0.5   83.3%      3        11      10.0      21.8    162.5
+      30      0.1  100.0%      1         2       4.0       2.5      6.6
+      30      0.5  100.0%      0         8       8.8       3.3      8.1
 ```
 
 Under harsher conditions (6 px noise, 3 ms timestamp jitter, 10% dropouts, 0.2 FP/frame)
-reacquisition stayed at 100% for occlusions up to 15 frames and 93% at 30 frames.
-The weak spot is long occlusions with many false positives (30 frames, 0.5 FP/frame: 83%).
+reacquisition stayed at 100% for every occlusion length up to 30 frames. Pushed much harder, with
+up to 2 false positives per frame (about 1 in 8 of the frame area covered each second), a 30-frame
+occlusion is still reacquired 96.7% of the time, with the 95th-percentile prediction error at
+74 px (the previous tracker managed 53.3% and 541 px).
 
 **Real-footage fix (gate size).** On a 186 px pink gumball being pushed around a table (not
 ballistic), both YOLO and the color detector lost the track at frame 113 even though the detector
@@ -280,6 +285,28 @@ Also found in that audit: the color detector gave a 16 px speck confidence 1.0 a
 0.97, so auto-select could pick the speck. Confidence now scales with blob area
 (`confident_area_px`).
 
+**Real-footage fix 3 (long loss, far return).** A second 1158-frame webcam recording (`try2`, ball
+carried by a hand, repeatedly leaving and re-entering the frame) scored only 67.7% against the
+largest-blob reference and created 13 tracks. Camera and drops were fine (29.9 FPS, 0 of 1158
+frames dropped after moving processing off the display thread). The failures were long stretches
+(up to 44 frames) where the ball was plainly detected but outside every gate: the ballistic
+prediction of a lost track runs away (to y = -9162 in one case) when a hand, not gravity, moves
+the ball. A lost track now also adopts a size-consistent detection within
+`reacquire_search_size_scale` object sizes of where it vanished once it is seen on two consecutive
+frames, restarting the filter on the ball (the single-detection false-positive protection of the
+gate is kept: one far detection is ignored). Two further defects surfaced while tracing: the
+remembered size shrank to 76 px as the ball left the top of the frame so its 130-220 px return
+failed the size gate (now also compared with the largest size over the last 15 hits), and
+auto-select could pick a 16 px speck on a confidence tie (ties now go to the larger box).
+Result on `try2`: **67.7% -> 97.5%, 13 -> 7 tracks** (the rest are real ends: the ball leaves for
+more than 60 frames); `try1` 99.6% and the gumball clip 100% are unchanged. Synthetic results
+*improved* (30-frame occlusion at 0.5 FP/frame: 83.3% -> 100%).
+A correction worth recording: a first version of the confirmation tolerated gaps between the two
+sightings (to cope with a flickering, motion-blurred ball). A stale line meant that tolerance was
+silently off while I measured; once actually on, it gained nothing on the real clips (97.5% ->
+97.6%) and cost the synthetic stress (30-frame occlusion at 2 FP/frame: 96.7% -> 83.3% for a
+window of 5), so the default stays strictly consecutive.
+
 ## Design decisions (ambiguities resolved the simple way)
 
 - Package lives at the repo root (`src/edge_vision/`); the repo is "Project Sentinel", the Python
@@ -302,8 +329,10 @@ Also found in that audit: the color detector gave a 16 px speck confidence 1.0 a
 - `YoloDetector` has only been tried on a few short phone clips. On a pink gumball it labeled
   the ball "orange" (COCO 49) rather than "sports ball" (32), and on a small, motion-blurred green
   ball it gave too few detections to confirm a track. The color detector exists for such cases.
-- No clip yet has a full throw-and-occlude arc with the ball in frame throughout. The gumball clip
-  is a rolling/pushed ball with no occlusion, so it tests the gate but not reacquisition.
+- No clip yet has a clean throw with the whole arc in frame and a deliberate occlusion. The real
+  clips (`try1`, `try2`, gumball) are hand-held or pushed balls that leave and re-enter the frame,
+  scored against the largest color blob per frame as reference. That tests the tracker (the
+  detector is near-perfect there) but is not hand-reviewed ground truth.
 - The click-to-select display window and the `label_clip.py` review window are untested (their
   logic is covered; the interactive UI has not been exercised).
 - The live webcam path has been run on one MacBook camera (color detector, 1280x720, 30 FPS:
