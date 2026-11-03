@@ -23,8 +23,11 @@ src/edge_vision/
   sim/                      synthetic.py (generator), runner.py (drive tracker over a sequence)
   telemetry/                CSV logger (per-frame rows + transition events)
   visualization/            OpenCV overlay and slow-motion analysis video writer/player
-  pipeline.py               source -> detector -> tracker -> overlay/CSV loop
-scripts/                    run_video.py, run_synthetic.py, evaluate_tracks.py
+  pipeline.py               source -> detector -> tracker -> overlay/CSV loop (offline)
+  realtime.py               real-time harness: capture thread, latest-frame mailbox, drop/latency stats
+  evaluation/               ground-truth labels, autolabel, accuracy scoring with confidence intervals
+scripts/                    run_video.py, run_realtime.py, run_synthetic.py, evaluate_tracks.py,
+                            label_clip.py, evaluate_accuracy.py
 tests/
 ```
 
@@ -94,6 +97,57 @@ quits. The CSV has `frame_idx, timestamp_s, track_id, state, cx, cy, pred_cx, pr
 confidence, detect_latency_ms, total_latency_ms`; state transitions go to `logs/out.events.csv`.
 `cx, cy` is the observed box center, or the predicted center while the ball is unobserved;
 `confidence` is blank on unobserved frames.
+
+## Real-time testing and accuracy
+
+**Is it real time?** `scripts/run_realtime.py` replays a clip paced to its own timestamps (or reads
+a live webcam) through a capture thread that keeps only the newest frame, so latency stays bounded
+and frames the pipeline cannot keep up with are counted as *dropped* instead of queueing up. It
+reports drops, deadline misses (processing longer than one frame period) and capture-to-output
+latency percentiles, and prints PASS/FAIL against the `realtime:` thresholds in the config.
+
+```bash
+python scripts/run_realtime.py data/clip.mov --detector color                  # paced replay
+python scripts/run_realtime.py data/clip.mov --detector yolo --speed 2         # 2x faster than real time
+python scripts/run_realtime.py --camera 0 --detector color --duration 20 --display   # live webcam
+```
+
+Measured on an Apple M1 (CPU only), 1080p 28 FPS gumball clip, 1x replay:
+
+| detector | dropped | latency p50 / p99 | deadline misses | result |
+|---|---|---|---|---|
+| color | 0% | 3.4 / 11.3 ms | 0 | PASS (also passes at 4x real time, ~105 FPS) |
+| YOLO11n, CPU | 18% | 58 / 83 ms | 130 of 133 | **FAIL** |
+
+The tracker itself costs about 0.14 ms per frame. YOLO on laptop CPU cannot hold 30 FPS while
+another thread decodes 1080p video; that is the job of the Jetson TensorRT export. The webcam
+path (`CameraSource`) is unit-tested with a fake camera but has not been run on a real webcam yet.
+
+**How accurate is it?** Accuracy needs ground truth:
+
+```bash
+python scripts/label_clip.py data/clip.mov --out data/clip.labels.csv --auto color   # pre-fill, then review
+python scripts/evaluate_accuracy.py data/clip.mov --labels data/clip.labels.csv --detector color
+python scripts/evaluate_accuracy.py data/clip.mov --labels data/clip.labels.csv --detector yolo --realtime
+```
+
+`label_clip.py` pre-fills labels with the color detector and opens a review window (click to set
+the ball center, `x` = not visible, `space`/`a` to step, `o` save, `q` quit); labels are
+`frame_idx,visible,cx,cy,w,h` CSVs. **Auto-labels are only a starting point:** scoring a detector
+against labels it produced is circular, so review them by hand before trusting any number.
+`evaluate_accuracy.py` reports, over frames where the ball is visible:
+
+- **hold rate**: tracker center within `center_tolerance_fraction` of the ball's size, with a
+  Wilson 95% confidence interval; misses split into no track / wrong location / dropped frame
+- ID switches, false observations while the ball is hidden, and reacquisition (same id back within
+  `reacq_deadline_frames` after each hidden stretch)
+- with `--realtime`, frames dropped by the harness count as misses (deliberately strict; the
+  tracker could coast through a drop, which is not credited)
+
+**Claiming 99% takes a lot of data.** A perfect score on 162 frames only supports a lower bound
+of 97.7%. Showing at least 99% at 95% confidence needs roughly 300 failure-free frames (more if
+there are any failures), and frames from one clip are highly correlated, so pool many clips and
+throws. The script prints PASS only when the interval's lower bound clears the target.
 
 ## How tracking works
 
@@ -194,7 +248,10 @@ a 24 px ball stays under the 40 px floor.
   ball it gave too few detections to confirm a track. The color detector exists for such cases.
 - No clip yet has a full throw-and-occlude arc with the ball in frame throughout. The gumball clip
   is a rolling/pushed ball with no occlusion, so it tests the gate but not reacquisition.
-- The click-to-select display window is untested (`pick_clicked` and overlay drawing are tested).
+- The click-to-select display window and the `label_clip.py` review window are untested (their
+  logic is covered; the interactive UI has not been exercised).
+- The live webcam path has not been run on a real camera.
+- No hand-reviewed ground truth exists yet, so no real accuracy number has been established.
 - No real-video tuning: the defaults come from synthetic data only.
 
 ## Jetson porting notes
