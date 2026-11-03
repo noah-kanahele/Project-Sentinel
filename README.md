@@ -50,7 +50,13 @@ python -m pytest -q
 ```
 
 The tests need no ultralytics: the end-to-end video test renders an mp4 with OpenCV and uses a
-stub detector.
+stub detector. Every script also has a smoke test. Lint and type checks (also run by CI on
+Python 3.9 and 3.12, see `.github/workflows/ci.yml`):
+
+```bash
+pip install -e ".[dev]"      # pytest, ruff, mypy
+ruff check src scripts tests && mypy
+```
 
 ## Run the synthetic sweep
 
@@ -106,6 +112,13 @@ a live webcam) through a capture thread that keeps only the newest frame, so lat
 and frames the pipeline cannot keep up with are counted as *dropped* instead of queueing up. It
 reports drops, deadline misses (processing longer than one frame period) and capture-to-output
 latency percentiles, and prints PASS/FAIL against the `realtime:` thresholds in the config.
+
+Threads: capture -> latest-frame mailbox -> **processing worker**, with the OpenCV window on the
+main thread (required on macOS) showing only the newest annotated frame. This split matters:
+when detection, tracking, drawing and `imshow` shared one thread, a live webcam run dropped 1-3%
+of frames although detect + track took under 2 ms (the window update stalled the loop). The report
+also prints the full per-iteration `loop ms` (including drawing and recording) and the indices of
+dropped frames, so a stall can be located.
 
 ```bash
 python scripts/run_realtime.py data/clip.mov --detector color                  # paced replay
@@ -172,10 +185,15 @@ throws. The script prints PASS only when the interval's lower bound clears the t
 - **State machine**: `DETECTED -> TRACKING -> TEMPORARILY_LOST -> REACQUIRING -> TRACK_ENDED`,
   driven by consecutive hit/miss counts from the config. Every transition (including creation) is
   emitted as an event with frame index, timestamp, from/to state and reason.
-- **Association / reacquisition**: nearest same-class, above-threshold detection to the Kalman
-  prediction inside the gate. Gate radius = `base + growth_per_frame_lost * misses +
-  covariance_scale * predicted_position_sigma`, capped. A detection inside the gate inherits the
-  track ID, which is reacquisition. Detections outside the gate are ignored.
+- **Association / reacquisition**: nearest same-class, above-threshold, similar-sized detection
+  inside the gate around the Kalman prediction. Gate radius = `max(base, gate_size_scale * object
+  size) + growth_per_frame_lost * misses + covariance_scale * predicted_position_sigma`, capped.
+  A second, smaller gate is centred on the **last observed position extrapolated with the last
+  observed velocity** (finite difference of the last two hits): the smoothed Kalman velocity lags
+  an abrupt change such as a throw, a bounce or a hand reversing, the raw observed velocity does
+  not. A detection inside either gate inherits the track ID, which is reacquisition. Detections
+  outside both gates, or more than `size_ratio_max` times larger or smaller than the track, are
+  ignored.
 
 ## Chosen defaults and why
 
@@ -186,6 +204,8 @@ Sweeps used 20-30 seeds per cell on the synthetic ball (60 FPS, parabola, 2 px c
 |---|---|---|
 | `gate_base_radius_px` | 40 | floor; 20 to 60 behaved similarly once growth was small |
 | `gate_size_scale` | 1.0 | gate is at least one object size wide; added after real footage (below) |
+| `observed_gate_growth_size_fraction` | 0.1 | extrapolation gate grows 10% of object size per missed frame |
+| `size_ratio_max` | 2.0 | reject detections more than 2x larger/smaller than the track |
 | `gate_growth_per_frame_lost_px` | **2** | was 12 in the first draft; see below |
 | `gate_covariance_scale` | 3.0 | adaptive margin from Kalman uncertainty |
 | `process_noise_jerk` / `measurement_noise_px` | 500 / 3.0 | 50 to 500 equivalent; 5000+ hurts badly |
@@ -238,6 +258,24 @@ gate never showed the problem. The gate is now at least `gate_size_scale` object
 box side), which holds all 162 frames with no losses. Synthetic sweep results are identical, since
 a 24 px ball stays under the 40 px floor.
 
+**Real-footage fix 2 (abrupt motion).** A 637-frame webcam recording of a green ball held in a
+hand and flung upward made the tracker lose the ball three times even though the detector saw it
+in nearly every frame. The ball dropped, then rose at about 75 px per frame within two frames;
+the Kalman velocity still said "falling", so the prediction ran away (it reached y = 2726 on a
+720 px frame) and the true ball sat outside the gate until the track ended. Measured against the
+largest color blob per frame as reference (the detector is near-perfect on these clips, so this
+tests the tracker): hold rate **74.9% -> 99.6%** and one track instead of three. Process noise was
+tried first and is not the lever (94% plateau from 500 to 5000, worse above). Letting the second
+gate grow by a fixed 10 px per frame also fixed the clip but cost the synthetic false-positive
+stress about 6-16 points of reacquisition, because 10 px is 40% of the 24 px synthetic ball but
+9% of the 110 px real one; growing by a *fraction of object size* costs about 1-2 points.
+Remaining caveat: the clip is a hand moving the ball, and `Gren_Ball_Test001` (ball visible for
+only 18 short bursts at about 200 px/frame) is still 44% and is not fixable by gating.
+
+Also found in that audit: the color detector gave a 16 px speck confidence 1.0 and the real ball
+0.97, so auto-select could pick the speck. Confidence now scales with blob area
+(`confident_area_px`).
+
 ## Design decisions (ambiguities resolved the simple way)
 
 - Package lives at the repo root (`src/edge_vision/`); the repo is "Project Sentinel", the Python
@@ -264,7 +302,8 @@ a 24 px ball stays under the 40 px floor.
   is a rolling/pushed ball with no occlusion, so it tests the gate but not reacquisition.
 - The click-to-select display window and the `label_clip.py` review window are untested (their
   logic is covered; the interactive UI has not been exercised).
-- The live webcam path has not been run on a real camera.
+- The live webcam path has been run on one MacBook camera (color detector, 1280x720, 30 FPS:
+  600+ frames, p99 latency about 2-6 ms). Not tried with YOLO or other cameras.
 - No hand-reviewed ground truth exists yet, so no real accuracy number has been established.
 - No real-video tuning: the defaults come from synthetic data only.
 
