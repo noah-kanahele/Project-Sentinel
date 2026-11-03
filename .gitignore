@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# Large / generated data
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+*.pt
+*.engine
+*.onnx

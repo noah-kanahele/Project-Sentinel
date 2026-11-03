@@ -1,0 +1,6 @@
+numpy
+opencv-python
+pyyaml
+pytest
+# Optional, only needed by src/edge_vision/detection (YoloDetector):
+# ultralytics
