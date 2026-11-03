@@ -23,6 +23,10 @@ class Label:
     w: Optional[float] = None
     h: Optional[float] = None
 
+    def __post_init__(self) -> None:
+        if self.visible and (self.cx is None or self.cy is None):
+            raise ValueError(f"frame {self.frame_idx}: a visible label needs cx and cy")
+
     @property
     def size(self) -> Optional[float]:
         """Larger box side, if known."""

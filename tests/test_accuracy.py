@@ -85,3 +85,9 @@ def test_autolabel_finds_ball_and_marks_hidden_frames(cfg):
     assert all(not labels[i].visible for i in range(25, 31))
     assert all(labels[i].visible for i in (0, 10, 24, 31, 49))
     assert labels[0].cx == pytest.approx(60 + 9, abs=12)  # ball starts near x=60 (+ radius rounding)
+
+
+def test_visible_label_without_position_is_rejected():
+    with pytest.raises(ValueError, match="cx and cy"):
+        Label(3, True)
+    Label(3, False)  # a hidden ball needs no position
