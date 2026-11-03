@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 detection = ["ultralytics"]
-dev = ["pytest"]
+dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -24,3 +24,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+ignore = ["E501", "UP006", "UP007", "UP035", "UP045"]  # long lines; typing.List/Optional style kept for 3.9
+
+[tool.mypy]
+files = ["src", "scripts"]
+ignore_missing_imports = true
