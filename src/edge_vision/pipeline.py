@@ -10,6 +10,7 @@ from edge_vision.camera.frame_source import FrameSource
 from edge_vision.detection.detector import Detection, Detector
 from edge_vision.telemetry.logger import TelemetryLogger
 from edge_vision.tracking.tracker import TrackOutput, Tracker
+from edge_vision.visualization.analysis import AnalysisWriter
 from edge_vision.visualization.overlay import draw_overlay
 
 WINDOW_NAME = "edge-vision"
@@ -30,11 +31,13 @@ def process_stream(
     tracker: Tracker,
     logger: Optional[TelemetryLogger] = None,
     display: bool = False,
+    analysis: Optional[AnalysisWriter] = None,
 ) -> List[TrackOutput]:
     """Run the whole pipeline over `source`; returns per-frame outputs.
 
     Subject selection: a click in the display window picks a detection; otherwise the
     highest-confidence detection is auto-selected whenever there is no live subject.
+    If `analysis` is given, every annotated frame is also written to the slow-motion analysis video.
     Wall-clock is used only to measure latency, never for tracking dt.
     """
     pending_click: List[Tuple[int, int]] = []
@@ -64,6 +67,9 @@ def process_stream(
             outputs.append(output)
             if logger is not None:
                 logger.log_frame(output, (t1 - t0) * 1000.0, (t2 - t0) * 1000.0)
+
+            if analysis is not None:
+                analysis.write(frame.image, output, detections, tracker)
 
             if display:
                 subject = tracker.subject
